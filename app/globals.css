@@ -1,0 +1,389 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/*
+ * Luxe palette — restrained, ivory on near-black, single champagne accent.
+ *
+ * The aesthetic intentionally removes the colourful gradient mesh and
+ * vivid amber from earlier iterations. Premium portfolios live or die on
+ * restraint: one accent, one display serif, generous whitespace, slow
+ * motion. Tokens are HSL triplets for Tailwind's `<alpha-value>` support.
+ *
+ * Contrast (WCAG 2.1 AA, validated):
+ *   foreground (#f1ece1 / ivory)   on background (#0a0a0a)  → 16.6:1  AAA
+ *   muted      (#9a958c / warm)    on background            → 6.6:1   AA
+ *   accent     (#c9a96e / champagne) on background          → 8.9:1   AAA
+ */
+@layer base {
+  :root {
+    --color-background: 0 0% 4%;
+    --color-surface: 24 5% 9%;
+    --color-foreground: 38 33% 92%;
+    --color-muted: 30 8% 58%;
+    --color-border: 30 6% 16%;
+    --color-accent: 35 45% 60%;
+    --color-accent-foreground: 0 0% 6%;
+    --color-ring: 35 45% 60%;
+
+    /* Slower, more deliberate motion timings. Luxury reads as patient. */
+    --ease-soft: cubic-bezier(0.22, 1, 0.36, 1);
+    --ease-luxe: cubic-bezier(0.65, 0, 0.35, 1);
+
+    /* Display serif stack — Cormorant first for warmth, falling back to
+       system serifs so the page never sees an unstyled flash. The font
+       is loaded by next/font in `app/layout.tsx`. */
+    --font-display:
+      var(--font-display-serif), 'Cormorant Garamond', 'Bodoni 72', 'Didot',
+      'Times New Roman', Georgia, serif;
+    --font-sans:
+      ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+      'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+  }
+
+  html {
+    scroll-behavior: smooth;
+    color-scheme: dark;
+    background: hsl(var(--color-background));
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    font-family: var(--font-sans);
+    /* Subtle vignette — barely perceptible warm lift in the upper centre,
+       nothing decorative. Removed the colourful radial mesh from the
+       earlier iteration. */
+    background-image:
+      radial-gradient(
+        ellipse 1200px 600px at 50% -10%,
+        hsl(35 25% 18% / 0.35) 0%,
+        transparent 65%
+      );
+    background-attachment: fixed;
+  }
+
+  :focus-visible {
+    @apply outline-none ring-1 ring-ring ring-offset-2 ring-offset-background;
+  }
+
+  ::selection {
+    background: hsl(var(--color-accent));
+    color: hsl(var(--color-accent-foreground));
+  }
+
+  /* Hairline scrollbar in the same warm palette. */
+  ::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+  }
+  ::-webkit-scrollbar-track {
+    background: hsl(var(--color-background));
+  }
+  ::-webkit-scrollbar-thumb {
+    background: hsl(var(--color-border));
+    border-radius: 8px;
+    border: 2px solid hsl(var(--color-background));
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    background: hsl(var(--color-muted) / 0.6);
+  }
+}
+
+@layer components {
+  .responsive-image-frame {
+    @apply relative block h-full w-full overflow-hidden;
+  }
+
+  .responsive-image-frame img {
+    @apply h-full w-full object-cover;
+    transition: transform 1400ms var(--ease-soft);
+    will-change: transform;
+  }
+
+  .group:hover .responsive-image-frame img,
+  .group:focus-visible .responsive-image-frame img {
+    transform: scale(1.04);
+  }
+
+  .surface-card {
+    @apply rounded-none border border-border bg-surface;
+  }
+
+  /* Buttons — square edges, hairline borders. No drop shadows; luxury
+     reads flat. The primary button uses a thin accent rule beneath the
+     label that grows on hover, the way a serif underline behaves. */
+  .btn-primary {
+    @apply relative inline-flex items-center justify-center bg-foreground px-7 py-3 text-xs font-medium uppercase tracking-[0.2em] text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+    transition: background-color 600ms var(--ease-soft),
+      color 600ms var(--ease-soft);
+  }
+  .btn-primary:hover {
+    background: hsl(var(--color-accent));
+    color: hsl(var(--color-accent-foreground));
+  }
+
+  .btn-secondary {
+    @apply relative inline-flex items-center justify-center border border-border bg-transparent px-7 py-3 text-xs font-medium uppercase tracking-[0.2em] text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+    transition: border-color 600ms var(--ease-soft),
+      color 600ms var(--ease-soft);
+  }
+  .btn-secondary:hover {
+    border-color: hsl(var(--color-accent));
+    color: hsl(var(--color-accent));
+  }
+
+  .chip {
+    @apply inline-flex items-center border border-border bg-transparent px-4 py-1.5 text-[11px] font-medium uppercase tracking-[0.16em] text-muted;
+    transition: border-color 500ms var(--ease-soft),
+      color 500ms var(--ease-soft),
+      background-color 500ms var(--ease-soft);
+  }
+  .chip:hover {
+    border-color: hsl(var(--color-foreground) / 0.4);
+    color: hsl(var(--color-foreground));
+  }
+  .chip-active {
+    border-color: hsl(var(--color-accent));
+    color: hsl(var(--color-accent));
+    background: transparent;
+  }
+
+  .input-field {
+    @apply w-full border border-border bg-transparent px-4 py-3 text-base text-foreground placeholder:text-muted/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+    transition: border-color 400ms var(--ease-soft);
+  }
+  .input-field:hover {
+    border-color: hsl(var(--color-foreground) / 0.3);
+  }
+
+  .label-field {
+    @apply mb-2 block text-[10px] font-medium uppercase tracking-[0.24em] text-muted;
+  }
+
+  /* Tile — flat, hairline frame, slow lift. No box-shadow. */
+  .tile-card {
+    @apply block overflow-hidden border border-border bg-surface;
+    transition:
+      transform 900ms var(--ease-soft),
+      border-color 900ms var(--ease-soft);
+    will-change: transform;
+  }
+  .tile-card:hover {
+    transform: translateY(-2px);
+    border-color: hsl(var(--color-foreground) / 0.25);
+  }
+
+  /* Display — serif, larger sizes, looser leading. The signature voice. */
+  .display-headline {
+    font-family: var(--font-display);
+    font-weight: 400;
+    @apply text-5xl leading-[1.05] tracking-[-0.01em] md:text-7xl lg:text-[6rem];
+    text-wrap: balance;
+  }
+
+  .display-headline em {
+    font-style: italic;
+    color: hsl(var(--color-accent));
+  }
+
+  .eyebrow {
+    @apply text-[10px] font-medium uppercase tracking-[0.32em] text-muted;
+  }
+
+  /* Thin horizontal rule used as a section divider, with a small notch
+     of accent at the start — a subtle nod to luxury house identity. */
+  .luxe-rule {
+    position: relative;
+    height: 1px;
+    background: hsl(var(--color-border));
+  }
+  .luxe-rule::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 28px;
+    height: 1px;
+    background: hsl(var(--color-accent));
+  }
+}
+
+@layer utilities {
+  .reveal {
+    opacity: 0;
+    transform: translateY(28px);
+    transition:
+      opacity 1200ms var(--ease-soft),
+      transform 1200ms var(--ease-soft);
+    will-change: opacity, transform;
+  }
+  .reveal-in {
+    opacity: 1;
+    transform: translateY(0);
+  }
+
+  .ease-soft {
+    transition-timing-function: var(--ease-soft);
+  }
+
+  /* Vignette wrapper used for the hero - a single warm pool of light
+     instead of a colourful mesh. */
+  .hero-halo {
+    pointer-events: none;
+    position: absolute;
+    inset: -30% -10% auto -10%;
+    height: 110%;
+    background: radial-gradient(
+      ellipse 800px 400px at 30% 30%,
+      hsl(35 30% 20% / 0.5) 0%,
+      transparent 70%
+    );
+    filter: blur(40px);
+    z-index: -1;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .reveal,
+    .reveal-in {
+      opacity: 1;
+      transform: none;
+      transition: none;
+    }
+    .responsive-image-frame img,
+    .tile-card,
+    .btn-primary,
+    .btn-secondary,
+    .chip {
+      transition: none !important;
+    }
+    .group:hover .responsive-image-frame img,
+    .group:focus-visible .responsive-image-frame img,
+    .tile-card:hover {
+      transform: none !important;
+    }
+  }
+}
+
+/* ---------------------------------------------------------------------------
+   Custom cursor
+   --------------------------------------------------------------------------- */
+
+body[data-cursor-active='true'] {
+  cursor: none;
+}
+body[data-cursor-active='true'] a,
+body[data-cursor-active='true'] button,
+body[data-cursor-active='true'] [role='button'],
+body[data-cursor-active='true'] .tile-card,
+body[data-cursor-active='true'] .chip {
+  cursor: none;
+}
+body[data-cursor-mode='text'] .custom-cursor-dot,
+body[data-cursor-mode='text'] .custom-cursor-ring,
+body[data-cursor-mode='text'] .custom-cursor-label {
+  opacity: 0;
+}
+body[data-cursor-mode='text'],
+body[data-cursor-mode='text'] input,
+body[data-cursor-mode='text'] textarea,
+body[data-cursor-mode='text'] [contenteditable='true'] {
+  cursor: text;
+}
+
+.custom-cursor-dot,
+.custom-cursor-ring,
+.custom-cursor-label {
+  position: fixed;
+  top: 0;
+  left: 0;
+  pointer-events: none;
+  z-index: 100;
+  will-change: transform, opacity, width, height, background-color;
+}
+
+.custom-cursor-dot {
+  width: 6px;
+  height: 6px;
+  margin-left: -3px;
+  margin-top: -3px;
+  border-radius: 9999px;
+  background: hsl(var(--color-foreground));
+  mix-blend-mode: difference;
+  transition: opacity 320ms var(--ease-soft);
+}
+
+.custom-cursor-ring {
+  width: 32px;
+  height: 32px;
+  margin-left: -16px;
+  margin-top: -16px;
+  border-radius: 9999px;
+  border: 1px solid hsl(var(--color-foreground) / 0.32);
+  background: transparent;
+  transition:
+    width 500ms var(--ease-soft),
+    height 500ms var(--ease-soft),
+    margin 500ms var(--ease-soft),
+    border-color 500ms var(--ease-soft),
+    background-color 500ms var(--ease-soft),
+    opacity 320ms var(--ease-soft);
+}
+.custom-cursor-ring[data-state='subtle'] {
+  width: 44px;
+  height: 44px;
+  margin-left: -22px;
+  margin-top: -22px;
+  border-color: hsl(var(--color-accent) / 0.6);
+}
+.custom-cursor-ring[data-state='strong'] {
+  width: 72px;
+  height: 72px;
+  margin-left: -36px;
+  margin-top: -36px;
+  border-color: hsl(var(--color-accent));
+}
+.custom-cursor-ring[data-click='true'] {
+  width: 24px !important;
+  height: 24px !important;
+  margin-left: -12px !important;
+  margin-top: -12px !important;
+  border-color: hsl(var(--color-accent));
+  transition-duration: 160ms;
+}
+
+body[data-cursor-visible='false'] .custom-cursor-dot,
+body[data-cursor-visible='false'] .custom-cursor-ring,
+body[data-cursor-visible='false'] .custom-cursor-label {
+  opacity: 0;
+}
+
+.custom-cursor-label {
+  padding: 5px 12px;
+  border: 1px solid hsl(var(--color-accent));
+  background: hsl(var(--color-background));
+  color: hsl(var(--color-accent));
+  font-size: 10px;
+  font-weight: 500;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  white-space: nowrap;
+  opacity: 0;
+  transform-origin: top left;
+  transition:
+    opacity 360ms var(--ease-soft),
+    transform 360ms var(--ease-soft);
+}
+.custom-cursor-label[data-state='visible'] {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce), (pointer: coarse), (hover: none) {
+  .custom-cursor-dot,
+  .custom-cursor-ring,
+  .custom-cursor-label {
+    display: none !important;
+  }
+  body[data-cursor-active='true'] {
+    cursor: auto !important;
+  }
+}

@@ -1,0 +1,407 @@
+// Prisma schema for the 3D Artist Portfolio (see design.md "Data Models").
+//
+// Tables mirror the structures defined in `lib/types/`:
+//   - Domain content: Project, MediaItem, Category, Tag, ProjectTag (join), Bio,
+//     SocialLink.
+//   - Inquiries: Inquiry, ReferenceImage, BudgetRangeOption.
+//   - Auth & operations: AdminUser, Session, NotificationJob, DeletionTask,
+//     AuditEvent, ConsentRecord.
+//
+// Indexes follow the design's "Database schema notes" section:
+//   * projects(status), projects(published_at DESC)
+//   * unique(slug) on projects
+//   * project_tags(tag_id)
+//   * inquiries(submitted_at DESC, status)
+//
+// The canonical store for visitor cookie consent is a first-party cookie; the
+// `consent_records` table is reserved for optional server-side audit logging
+// of consent decisions and is not used for visitor lookups.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ---------------------------------------------------------------------------
+// Enums
+// ---------------------------------------------------------------------------
+
+enum ProjectStatus {
+  draft
+  published
+}
+
+enum MediaKind {
+  image
+  video
+  model3d
+}
+
+enum InquiryType {
+  contact
+  commission
+}
+
+enum InquiryStatus {
+  new
+  read
+  archived
+  pending_deletion
+}
+
+/// Mirrors `ProjectType` in lib/types/inquiry.ts. Postgres enum identifiers
+/// cannot contain spaces, so "Product Visualization" is stored as
+/// `ProductVisualization`; the application layer maps this to the human label.
+enum ProjectType {
+  Character
+  Environment
+  ProductVisualization
+  Animation
+  Other
+}
+
+enum JobState {
+  pending
+  succeeded
+  failed
+}
+
+/// Deletion task terminal states. `failed_manual` corresponds to the
+/// design's `failed-manual` (Postgres enum names cannot contain hyphens).
+enum DeletionTaskState {
+  pending
+  succeeded
+  failed_manual
+}
+
+enum ConsentDecision {
+  accepted
+  rejected
+}
+
+// ---------------------------------------------------------------------------
+// Taxonomy
+// ---------------------------------------------------------------------------
+
+model Category {
+  id       String  @id
+  name     String  @db.VarChar(60)
+  ordering Int
+
+  projects Project[]
+
+  @@map("categories")
+}
+
+model Tag {
+  id       String @id
+  label    String @db.VarChar(40)
+  ordering Int
+
+  projects ProjectTag[]
+
+  @@map("tags")
+}
+
+// ---------------------------------------------------------------------------
+// Projects and media
+// ---------------------------------------------------------------------------
+
+model Project {
+  id            String        @id @default(uuid()) @db.Uuid
+  slug          String        @unique @db.VarChar(80)
+  title         String        @db.VarChar(120)
+  description   String        @db.Text
+  categoryId    String
+  category      Category      @relation(fields: [categoryId], references: [id])
+  coverMediaId  String?       @db.Uuid
+  coverMedia    MediaItem?    @relation("ProjectCover", fields: [coverMediaId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  /// Free-text software list, 0..20 entries each 1..60 chars (validated in app).
+  softwareUsed  String[]      @db.VarChar(60)
+  creationDate  DateTime      @db.Date
+  publishedAt   DateTime?
+  status        ProjectStatus @default(draft)
+  /// Position in the featured set, 0..11; null when not featured. Distinct
+  /// across all projects when set (enforced by `validateFeaturedIds`).
+  featuredOrder Int?
+  createdAt     DateTime      @default(now())
+  updatedAt     DateTime      @updatedAt
+
+  mediaItems MediaItem[]  @relation("ProjectMedia")
+  tags       ProjectTag[]
+
+  @@index([status])
+  @@index([publishedAt(sort: Desc)])
+  @@map("projects")
+}
+
+/// Conjunctive tag join. Composite PK ensures (project, tag) uniqueness; the
+/// secondary index on `tagId` accelerates conjunctive filtering in the
+/// Gallery query.
+model ProjectTag {
+  projectId String  @db.Uuid
+  tagId     String
+  project   Project @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  tag       Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([projectId, tagId])
+  @@index([tagId])
+  @@map("project_tags")
+}
+
+model MediaItem {
+  id          String    @id @default(uuid()) @db.Uuid
+  projectId   String    @db.Uuid
+  project     Project   @relation("ProjectMedia", fields: [projectId], references: [id], onDelete: Cascade)
+  storageKey  String    @db.VarChar(512)
+  contentHash String    @db.VarChar(64)
+  mimeType    String    @db.VarChar(60)
+  width       Int?
+  height      Int?
+  durationSec Float?
+  byteSize    Int
+  kind        MediaKind
+  altText     String?   @db.VarChar(500)
+  caption     String?   @db.VarChar(200)
+  ordering    Int
+
+  // Optional WebVTT captions track for video; flattened from MediaRef.
+  captionsStorageKey  String? @db.VarChar(512)
+  captionsContentHash String? @db.VarChar(64)
+  captionsMimeType    String? @db.VarChar(60)
+  captionsByteSize    Int?
+
+  transcript String? @db.Text
+
+  /// Reverse relation for Project.coverMedia. A media item may be the cover
+  /// for at most one project in practice; this is enforced in the app layer.
+  coverFor Project[] @relation("ProjectCover")
+
+  @@index([projectId, ordering])
+  @@map("media_items")
+}
+
+// ---------------------------------------------------------------------------
+// Bio (singleton)
+// ---------------------------------------------------------------------------
+
+/// There is exactly one Bio row. The application enforces this by using the
+/// fixed primary key `singleton`; CMS write paths upsert against this id.
+/// Profile image and resume MediaRef fields are flattened to columns rather
+/// than maintaining separate tables since they have a 1:1 relationship to Bio.
+model Bio {
+  id String @id @default("singleton")
+
+  artistName String @db.VarChar(100)
+  tagline    String @db.VarChar(160)
+  biography  String @db.Text
+
+  profileImageStorageKey  String? @db.VarChar(512)
+  profileImageContentHash String? @db.VarChar(64)
+  profileImageMimeType    String? @db.VarChar(60)
+  profileImageWidth       Int?
+  profileImageHeight      Int?
+  profileImageByteSize    Int?
+
+  resumeStorageKey  String? @db.VarChar(512)
+  resumeContentHash String? @db.VarChar(64)
+  resumeMimeType    String? @db.VarChar(60)
+  resumeByteSize    Int?
+
+  /// 0..30 entries, each 1..60 chars (validated in app).
+  skills String[] @db.VarChar(60)
+  /// 0..30 entries, each 1..60 chars (validated in app).
+  software String[] @db.VarChar(60)
+
+  updatedAt DateTime @updatedAt
+
+  socialLinks SocialLink[]
+
+  @@map("bio")
+}
+
+model SocialLink {
+  id       String @id @default(uuid()) @db.Uuid
+  bioId    String
+  bio      Bio    @relation(fields: [bioId], references: [id], onDelete: Cascade)
+  platform String @db.VarChar(40)
+  url      String @db.VarChar(2048)
+  ordering Int
+
+  @@index([bioId, ordering])
+  @@map("social_links")
+}
+
+// ---------------------------------------------------------------------------
+// Inquiries
+// ---------------------------------------------------------------------------
+
+model BudgetRangeOption {
+  id       String @id
+  label    String @db.VarChar(60)
+  ordering Int
+
+  inquiries Inquiry[]
+
+  @@map("budget_range_options")
+}
+
+/// Inquiry text columns are scheduled for column-level encryption (pgcrypto +
+/// KMS-managed key, see Requirement 12.3); we model them as plain text here
+/// and let the application-level adapter wrap reads/writes.
+model Inquiry {
+  id          String        @id @default(uuid()) @db.Uuid
+  type        InquiryType
+  submittedAt DateTime      @default(now())
+  name        String        @db.VarChar(100)
+  email       String        @db.VarChar(254)
+  subject     String?       @db.VarChar(200)
+  message     String        @db.Text
+  status      InquiryStatus @default(new)
+
+  // Commission-only fields
+  projectType    ProjectType?
+  budgetRangeId  String?
+  budgetRange    BudgetRangeOption? @relation(fields: [budgetRangeId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+  targetDeadline DateTime?          @db.Date
+
+  // Operational metadata
+  /// Truncated to /24 (IPv4) or /48 (IPv6) before persisting.
+  clientIp          String   @db.VarChar(64)
+  userAgent         String?  @db.VarChar(500)
+  /// Audit flag; the underlying columns are encrypted at rest via pgcrypto.
+  encryptedAtRest   Boolean  @default(true)
+  notificationJobId String?  @db.Uuid
+  deliveryFailed    Boolean  @default(false)
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  referenceImages  ReferenceImage[]
+  notificationJobs NotificationJob[]
+  deletionTasks    DeletionTask[]
+
+  @@index([submittedAt(sort: Desc), status])
+  @@map("inquiries")
+}
+
+model ReferenceImage {
+  id               String  @id @default(uuid()) @db.Uuid
+  inquiryId        String  @db.Uuid
+  inquiry          Inquiry @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  storageKey       String  @db.VarChar(512)
+  contentHash      String  @db.VarChar(64)
+  mimeType         String  @db.VarChar(60)
+  byteSize         Int
+  originalFilename String  @db.VarChar(260)
+
+  @@index([inquiryId])
+  @@map("reference_images")
+}
+
+// ---------------------------------------------------------------------------
+// Authentication and sessions
+// ---------------------------------------------------------------------------
+
+model AdminUser {
+  id               String    @id @default(uuid()) @db.Uuid
+  username         String    @unique @db.VarChar(60)
+  passwordHash     String    @db.Text
+  /// TOTP shared secret, encrypted at rest via app-level adapter.
+  totpSecret       String    @db.Text
+  lastLoginAt      DateTime?
+  failedLoginCount Int       @default(0)
+  lockedUntil      DateTime?
+
+  sessions    Session[]
+  auditEvents AuditEvent[]
+
+  @@map("admin_users")
+}
+
+/// Auth.js session. `id` is the opaque cookie value; `expiresAt` enforces the
+/// 8-hour idle timeout (refreshed on activity) capped at 24 h hard expiry.
+model Session {
+  id         String    @id
+  adminId    String    @db.Uuid
+  admin      AdminUser @relation(fields: [adminId], references: [id], onDelete: Cascade)
+  createdAt  DateTime  @default(now())
+  lastSeenAt DateTime  @default(now())
+  expiresAt  DateTime
+
+  @@index([adminId])
+  @@index([expiresAt])
+  @@map("sessions")
+}
+
+// ---------------------------------------------------------------------------
+// Background jobs
+// ---------------------------------------------------------------------------
+
+model NotificationJob {
+  id           String   @id @default(uuid()) @db.Uuid
+  inquiryId    String   @db.Uuid
+  inquiry      Inquiry  @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  /// 0..3; the dispatcher terminates after the third attempt.
+  attemptCount Int      @default(0)
+  nextRunAt    DateTime
+  lastError    String?  @db.Text
+  state        JobState @default(pending)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@index([state, nextRunAt])
+  @@map("notification_jobs")
+}
+
+model DeletionTask {
+  id           String            @id @default(uuid()) @db.Uuid
+  inquiryId    String            @db.Uuid
+  inquiry      Inquiry           @relation(fields: [inquiryId], references: [id], onDelete: Cascade)
+  /// 0..3; after the third attempt the task moves to `failed_manual`.
+  attemptCount Int               @default(0)
+  nextRunAt    DateTime
+  state        DeletionTaskState @default(pending)
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+
+  @@index([state, nextRunAt])
+  @@map("deletion_tasks")
+}
+
+// ---------------------------------------------------------------------------
+// Audit and consent
+// ---------------------------------------------------------------------------
+
+model AuditEvent {
+  id         String    @id @default(uuid()) @db.Uuid
+  actorId    String    @db.Uuid
+  actor      AdminUser @relation(fields: [actorId], references: [id], onDelete: Restrict)
+  action     String    @db.VarChar(80)
+  /// Subject id when applicable (project id, inquiry id, etc.) as a string.
+  targetId   String?   @db.VarChar(120)
+  occurredAt DateTime  @default(now())
+  metadata   Json
+
+  @@index([occurredAt(sort: Desc)])
+  @@index([actorId])
+  @@map("audit_events")
+}
+
+/// Server-side audit record of cookie consent decisions. The canonical store
+/// is the visitor's first-party cookie; this table exists to support optional
+/// server-side audit logging without storing PII (`subjectHash` is a one-way
+/// hash of the cookie value).
+model ConsentRecord {
+  id          String          @id @default(uuid()) @db.Uuid
+  decision    ConsentDecision
+  decidedAt   DateTime        @default(now())
+  expiresAt   DateTime
+  subjectHash String          @db.VarChar(128)
+
+  @@index([subjectHash])
+  @@map("consent_records")
+}

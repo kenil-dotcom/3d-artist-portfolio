@@ -1,0 +1,8 @@
+# React components for the public site and CMS.
+# Subdirectories arrive with their respective tasks:
+#   - components/media/    (ResponsiveImage, lazy-image-reducer) — Task 5.x
+#   - components/lightbox/ (Lightbox + reducer)                  — Task 6.x
+#   - components/video/    (VideoPlayer)                          — Task 6.x
+#   - components/model/    (ModelViewer)                          — Task 6.x
+#   - components/forms/    (ContactForm, CommissionInquiryForm)   — Task 8.x
+#   - components/layout/   (Footer, header, etc.)                 — Task 14.x

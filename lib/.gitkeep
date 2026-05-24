@@ -1,0 +1,10 @@
+# Pure logic and infrastructure adapters live here.
+# Subdirectories are added by their respective tasks:
+#   - lib/types/   (Task 1.2)
+#   - lib/clock.ts, lib/ids.ts (Task 1.4)
+#   - lib/validation/ (Task 2.x)
+#   - lib/gallery/, lib/landing/, lib/projects/ (Task 3.x)
+#   - lib/media/, lib/storage/ (Task 5.x)
+#   - lib/rate-limit/, lib/captcha/, lib/notifications/ (Task 7.x)
+#   - lib/auth/, lib/cms/, lib/deletion/ (Tasks 9-12)
+#   - lib/seo/, lib/a11y/ (Tasks 15-16)
