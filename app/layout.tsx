@@ -22,6 +22,15 @@ const displaySans = Space_Grotesk({
 });
 
 /**
+ * The root layout fetches Bio data via Prisma on every render. Marking
+ * it dynamic prevents Next.js from attempting to prerender it (and every
+ * page that uses it) during the build, which would require a live DB
+ * connection from Vercel's build container. Pages render on demand at
+ * request time, where Neon is reachable.
+ */
+export const dynamic = 'force-dynamic';
+
+/**
  * Root layout.
  *
  * Renders the site-wide chrome (skip link, header, footer) once for every
