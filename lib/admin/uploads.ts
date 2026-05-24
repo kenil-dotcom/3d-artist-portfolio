@@ -27,6 +27,7 @@ import { join } from 'node:path';
 
 import sharp from 'sharp';
 import {
+  DeleteObjectCommand,
   PutObjectCommand,
   S3Client,
   type S3ClientConfig,
@@ -46,8 +47,14 @@ const UPLOADS_ROOT = join(PUBLIC_DIR, 'uploads');
  * Map a MIME type to a stable, lowercase file extension. Unknown types
  * fall back to `bin` so the file is still written but never confused
  * with a known format.
+ *
+ * Exported so the upload server actions in
+ * `app/admin/(protected)/projects/[id]/edit/upload-actions.ts` can persist
+ * `MediaItem.extension` from the validated MIME without duplicating the
+ * map (Requirement 2.11). Keep this object the single source of truth —
+ * any new model / image / video format should land here first.
  */
-const MIME_TO_EXT: Readonly<Record<string, string>> = {
+export const MIME_TO_EXT: Readonly<Record<string, string>> = {
   'image/jpeg': 'jpg',
   'image/png': 'png',
   'image/webp': 'webp',
@@ -55,6 +62,7 @@ const MIME_TO_EXT: Readonly<Record<string, string>> = {
   'video/webm': 'webm',
   'model/gltf+json': 'gltf',
   'model/gltf-binary': 'glb',
+  'model/vnd.usdz+zip': 'usdz',
   'application/pdf': 'pdf',
 };
 
@@ -172,6 +180,107 @@ function r2Url(cfg: R2Config, key: string): string {
     .split('/')
     .map((segment) => encodeURIComponent(segment))
     .join('/')}`;
+}
+
+/**
+ * Best-effort delete of a single R2 object by key. Returns `true` when
+ * the delete request succeeded, `false` when the R2 client is not
+ * configured or the request threw. Callers that need to surface the
+ * underlying error should wrap their own try/catch around the SDK call;
+ * this helper exists so feature code (variant cleanup, replace-file)
+ * does not have to reach for the S3 SDK directly.
+ *
+ * The R2 client is unavailable in dev environments without S3 env vars;
+ * in that case we treat the delete as a no-op and return `false` so the
+ * caller can decide whether to escalate. Variant cleanup treats both
+ * states (no client, transient error) the same — log and continue —
+ * because the bucket lifecycle rule reaps orphans eventually.
+ */
+export async function removeFromR2(key: string): Promise<boolean> {
+  if (key.length === 0) return false;
+  const cfg = resolveR2();
+  if (cfg === null) return false;
+  try {
+    await cfg.client.send(
+      new DeleteObjectCommand({ Bucket: cfg.bucket, Key: key }),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Recover the R2 object key from a public URL produced by `r2Url`.
+ *
+ * Encoded path segments are decoded so the returned key matches the one
+ * `PutObjectCommand` originally wrote. Returns `null` when the URL does
+ * not start with the configured `CDN_BASE_URL` prefix (foreign URL,
+ * misconfiguration, or local-disk fallback). Callers handle `null` as
+ * "nothing to delete" — the bucket lifecycle rule eventually reaps any
+ * orphan that slips through.
+ */
+export function r2KeyFromPublicUrl(publicUrl: string): string | null {
+  const cfg = resolveR2();
+  if (cfg === null) return null;
+  const prefix = `${cfg.publicBaseUrl}/`;
+  if (!publicUrl.startsWith(prefix)) return null;
+  const encoded = publicUrl.slice(prefix.length);
+  if (encoded.length === 0) return null;
+  try {
+    return encoded
+      .split('/')
+      .map((segment) => decodeURIComponent(segment))
+      .join('/');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Best-effort delete of an R2 object addressed by its public URL. Used
+ * by the upload pipeline when a freshly uploaded image fails the strict
+ * dimension probe (Requirement 2.10): we delete the orphan object before
+ * surfacing the rejection to the client. A failure to reach R2 is
+ * swallowed — the rejection still surfaces and the bucket lifecycle
+ * rule eventually reaps the orphan.
+ */
+export async function removeFromR2ByPublicUrl(
+  publicUrl: string,
+): Promise<boolean> {
+  const key = r2KeyFromPublicUrl(publicUrl);
+  if (key === null) return false;
+  return removeFromR2(key);
+}
+
+/**
+ * Persist arbitrary bytes (typically a derived variant rendition)
+ * directly to R2. Returns the publicly resolvable URL plus the byte
+ * size so callers can record both on the Media_Item's `variantSet`.
+ *
+ * Throws when the R2 client is not configured: the variant pipeline
+ * runs only after `finalizeUpload` has already required R2 to issue a
+ * presigned PUT URL for the original, so missing credentials at this
+ * point would mean the env disappeared mid-request and the caller
+ * should surface that as a transient failure rather than silently
+ * succeed with a nonsense URL.
+ */
+export async function putR2Object(
+  key: string,
+  body: Buffer,
+  contentType: string,
+): Promise<{ readonly url: string; readonly byteSize: number }> {
+  if (key.length === 0) {
+    throw new Error('putR2Object: key must be a non-empty string');
+  }
+  const cfg = resolveR2();
+  if (cfg === null) {
+    throw new Error(
+      'putR2Object: R2 client is not configured (missing S3_* env vars).',
+    );
+  }
+  await putToR2(cfg, key, body, contentType);
+  return { url: r2Url(cfg, key), byteSize: body.byteLength };
 }
 
 // ---------------------------------------------------------------------------

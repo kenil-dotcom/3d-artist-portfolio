@@ -32,6 +32,7 @@ function makeProject(overrides: {
     softwareUsed: [],
     creationDate: '2024-01-01' as IsoDate,
     publishedAt: overrides.publishedAt as IsoTimestamp,
+    scheduledAt: null,
     status: 'published',
     featuredOrder: null,
     createdAt: '2024-01-01T00:00:00.000Z' as IsoTimestamp,

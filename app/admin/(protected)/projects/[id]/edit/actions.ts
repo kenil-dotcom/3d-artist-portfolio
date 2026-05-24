@@ -15,7 +15,8 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
 import { requireAdmin } from '@/lib/auth/middleware';
-import { storeProjectMedia } from '@/lib/admin/uploads';
+import { removeFromR2, storeProjectMedia } from '@/lib/admin/uploads';
+import { deleteVariantKeys } from '@/lib/admin/variants';
 import { slugify } from '@/lib/admin/slug';
 import { prisma } from '@/lib/db/prisma';
 import type {
@@ -32,8 +33,13 @@ import {
   SLUG_PATTERN,
   validateProjectInput,
   validatePublishable,
+  normalizeSoftwareList,
+  SOFTWARE_ENTRY_MAX_LENGTH,
+  SOFTWARE_ENTRY_MIN_LENGTH,
+  SOFTWARE_USED_MAX,
   TITLE_MAX_LENGTH,
 } from '@/lib/validation/project';
+import { normalizeAltText, normalizeCaption } from '@/lib/validation/media';
 
 // ---------------------------------------------------------------------------
 // Action result shape
@@ -104,6 +110,11 @@ async function reloadProjectAsDomain(id: string): Promise<Project | null> {
     captionsRef: null,
     transcript: m.transcript,
     embedUrl: m.embedUrl,
+    extension: m.extension,
+    variantSet: (m.variantSet as unknown as MediaItem['variantSet']) ?? {
+      renditions: [],
+      failures: [],
+    },
   }));
 
   return {
@@ -121,6 +132,7 @@ async function reloadProjectAsDomain(id: string): Promise<Project | null> {
       row.creationDate.toISOString().slice(0, 10),
     ),
     publishedAt: row.publishedAt === null ? null : brand(row.publishedAt.toISOString()),
+    scheduledAt: row.scheduledAt === null ? null : brand(row.scheduledAt.toISOString()),
     status: row.status as ProjectStatus,
     featuredOrder: row.featuredOrder,
     createdAt: brand(row.createdAt.toISOString()),
@@ -154,7 +166,7 @@ export async function saveProject(
   const descriptionRaw = (formData.get('description') ?? '').toString();
   const categoryId = (formData.get('categoryId') ?? '').toString();
   const tagIds = parseStringList(formData, 'tagIds');
-  const softwareUsed = parseStringList(formData, 'softwareUsed');
+  const softwareRaw = parseStringList(formData, 'softwareUsed');
   const creationDate = (formData.get('creationDate') ?? '').toString();
   const statusRaw = (formData.get('status') ?? 'draft').toString();
   const status: ProjectStatus =
@@ -185,6 +197,20 @@ export async function saveProject(
   if (categoryId.length === 0) {
     errors['categoryId'] = 'Pick a category.';
   }
+
+  // Normalise the software list (trim + case-insensitive dedupe). This runs
+  // before `validateProjectInput` so duplicate / oversize lists are caught
+  // and the validator sees the canonical form (Requirements 11.3–11.6).
+  const softwareNormalisation = normalizeSoftwareList(softwareRaw);
+  if (!softwareNormalisation.ok) {
+    errors['softwareUsed'] =
+      softwareNormalisation.code === 'too_many_software_entries'
+        ? `Software list may contain at most ${SOFTWARE_USED_MAX} entries.`
+        : `Each software entry must be ${SOFTWARE_ENTRY_MIN_LENGTH}–${SOFTWARE_ENTRY_MAX_LENGTH} characters after trimming.`;
+  }
+  const softwareUsed: ReadonlyArray<string> = softwareNormalisation.ok
+    ? softwareNormalisation.value
+    : softwareRaw;
 
   // Validate against the pure validator next so length / date / enum
   // errors surface from the same source the public site uses.
@@ -465,8 +491,8 @@ export async function updateMediaItem(formData: FormData): Promise<void> {
   const id = (formData.get('id') ?? '').toString();
   if (id.length === 0) return;
 
-  const altText = (formData.get('altText') ?? '').toString().trim();
-  const caption = (formData.get('caption') ?? '').toString().trim();
+  const altText = normalizeAltText((formData.get('altText') ?? '').toString());
+  const caption = normalizeCaption((formData.get('caption') ?? '').toString());
 
   const item = await prisma.mediaItem.findUnique({
     where: { id },
@@ -477,8 +503,8 @@ export async function updateMediaItem(formData: FormData): Promise<void> {
   await prisma.mediaItem.update({
     where: { id },
     data: {
-      altText: altText.length === 0 ? null : altText.slice(0, 500),
-      caption: caption.length === 0 ? null : caption.slice(0, 200),
+      altText,
+      caption,
     },
   });
 
@@ -498,7 +524,18 @@ export async function deleteMediaItem(formData: FormData): Promise<void> {
   });
   if (item === null) return;
 
-  await prisma.mediaItem.delete({ where: { id } });
+  // Remove the row and the per-rendition R2 objects in the same
+  // transaction so a Media_Item never lingers in the database with its
+  // variants gone, or vice versa (Requirement 6.8). `deleteVariantKeys`
+  // is best-effort at the per-key level — individual SDK failures are
+  // swallowed inside the helper so the row delete still commits — but
+  // any unexpected throw propagates and the transaction rolls back,
+  // surfacing an actionable error to the admin instead of silently
+  // stranding either side.
+  await prisma.$transaction(async (tx) => {
+    await tx.mediaItem.delete({ where: { id } });
+    await deleteVariantKeys(id, { remove: async (key) => { await removeFromR2(key); } });
+  });
   revalidateProjectPaths(item.project.slug);
 }
 

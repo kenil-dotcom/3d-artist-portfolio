@@ -4,7 +4,7 @@
  * Covers:
  *  - `validateSlug`         (regex shape, length 1..80)
  *  - `validateProjectInput` (every clause from Property 16)
- *  - `validatePublishable`  (Requirement 8.11 + 10.4 enumeration)
+ *  - `validatePublishable`  (Requirement 8.1–8.9 + RULE_ORDER aggregation)
  */
 
 import { describe, expect, it } from 'vitest';
@@ -74,6 +74,8 @@ function makeMediaItem(overrides: Partial<MediaItem> = {}): MediaItem {
     captionsRef: null,
     transcript: null,
     embedUrl: null,
+    extension: 'jpg',
+    variantSet: { renditions: [], failures: [] },
     ...overrides,
   };
 }
@@ -92,6 +94,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     softwareUsed: [],
     creationDate: '2025-01-10' as IsoDate,
     publishedAt: null,
+    scheduledAt: null,
     status: 'draft',
     featuredOrder: null,
     createdAt: '2025-01-10T00:00:00.000Z' as IsoTimestamp,
@@ -347,24 +350,22 @@ describe('validatePublishable', () => {
     expect(result).toEqual({ ok: false, missing: ['missing_title'] });
   });
 
-  it('reports missing_cover_media when coverMediaId is null', () => {
+  it('reports missing_cover when coverMediaId is null', () => {
     const project = makeProject({ coverMediaId: null });
     const result = validatePublishable(project);
-    expect(result).toEqual({ ok: false, missing: ['missing_cover_media'] });
+    expect(result).toEqual({ ok: false, missing: ['missing_cover'] });
   });
 
-  it('reports no_media_items when mediaItems is empty', () => {
+  it('reports both missing_cover and no_media in RULE_ORDER when mediaItems is empty', () => {
     const project = makeProject({ mediaItems: [], coverMediaId: null });
     const result = validatePublishable(project);
     if (result.ok) {
       throw new Error('expected failure');
     }
-    expect([...result.missing].sort()).toEqual(
-      ['missing_cover_media', 'no_media_items'].sort()
-    );
+    expect(result.missing).toEqual(['missing_cover', 'no_media']);
   });
 
-  it('reports missing_alt_text(<id>) per offending image media item', () => {
+  it('reports a single missing_alt_text code regardless of how many image rows offend', () => {
     const m1 = makeMediaItem({ id: 'm-1' as MediaItemId, altText: '' });
     const m2 = makeMediaItem({ id: 'm-2' as MediaItemId, altText: 'ok' });
     const m3 = makeMediaItem({ id: 'm-3' as MediaItemId, altText: null });
@@ -382,13 +383,10 @@ describe('validatePublishable', () => {
     if (result.ok) {
       throw new Error('expected failure');
     }
-    expect(result.missing).toEqual([
-      'missing_alt_text(m-1)',
-      'missing_alt_text(m-3)',
-    ]);
+    expect(result.missing).toEqual(['missing_alt_text']);
   });
 
-  it('reports every individual violation when multiple gates fail at once', () => {
+  it('reports every individual violation in RULE_ORDER when multiple gates fail at once', () => {
     const m1 = makeMediaItem({ id: 'm-1' as MediaItemId, altText: '' });
     const project = makeProject({
       title: '',
@@ -400,12 +398,16 @@ describe('validatePublishable', () => {
     if (result.ok) {
       throw new Error('expected failure');
     }
-    expect([...result.missing].sort()).toEqual(
-      ['missing_title', 'missing_cover_media', 'missing_alt_text(m-1)'].sort()
-    );
+    // RULE_ORDER is: missing_title, invalid_slug, missing_category,
+    // missing_cover, no_media, missing_alt_text, block_reference_broken
+    expect(result.missing).toEqual([
+      'missing_title',
+      'missing_cover',
+      'missing_alt_text',
+    ]);
   });
 
-  it('does not flag missing_alt_text when there are zero media items (no_media_items wins)', () => {
+  it('does not flag missing_alt_text when there are zero media items (no_media wins)', () => {
     const project = makeProject({ mediaItems: [], coverMediaId: null });
     const result = validatePublishable(project);
     if (result.ok) {

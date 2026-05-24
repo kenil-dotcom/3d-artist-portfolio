@@ -6,9 +6,12 @@
  * the resulting rows to the branded domain types in `lib/types/domain.ts`.
  *
  * Intentional scope limits:
- *   - All public read paths exclude `draft` projects (Requirements 8.7,
- *     3.10). `getProjectBySlug` returns `null` for both unknown slugs and
- *     drafts so the public 404 response is byte-identical.
+ *   - All public read paths exclude `draft` and `scheduled` projects
+ *     (Requirements 7.9, 7.10, 8.7, 3.10) by filtering on
+ *     `status = 'published'` directly in the Prisma `where` clause, so
+ *     non-published rows never enter the application layer.
+ *     `getProjectBySlug` returns `null` for unknown slugs and for
+ *     non-published rows so the public 404 response is byte-identical.
  *   - Sorting, filtering, and pagination logic is delegated to the pure
  *     `lib/gallery/listing.listGallery` reducer; this module only loads
  *     the candidate set from the database and projects rows into the
@@ -37,6 +40,7 @@ import type {
   SocialLinkId,
   Tag,
   TagId,
+  VariantSet,
 } from '@/lib/types/domain';
 import type { GalleryPageResult, GalleryQuery } from '@/lib/types/cms';
 import { prisma } from '@/lib/db/prisma';
@@ -107,6 +111,7 @@ const VIDEO_MIME_TYPES: ReadonlyArray<MediaMimeType> = ['video/mp4', 'video/webm
 const MODEL_MIME_TYPES: ReadonlyArray<MediaMimeType> = [
   'model/gltf+json',
   'model/gltf-binary',
+  'model/vnd.usdz+zip',
 ];
 const ALL_MIME_TYPES: ReadonlyArray<MediaMimeType> = [
   ...IMAGE_MIME_TYPES,
@@ -130,7 +135,8 @@ function narrowMediaKind(value: string): MediaKind {
 }
 
 function narrowProjectStatus(value: string): ProjectStatus {
-  return value === 'published' ? 'published' : 'draft';
+  if (value === 'published' || value === 'scheduled') return value;
+  return 'draft';
 }
 
 // ---------------------------------------------------------------------------
@@ -157,6 +163,30 @@ interface MediaItemRow {
   readonly captionsByteSize: number | null;
   readonly transcript: string | null;
   readonly embedUrl: string | null;
+  readonly extension: string | null;
+  readonly variantSet: unknown;
+}
+
+function narrowVariantSet(value: unknown): VariantSet {
+  // Defensive: legacy rows persisted before the variant pipeline landed
+  // carry the `{}` default, which has no `renditions` / `failures` keys.
+  // Treat any malformed payload as the empty fallback so the renderer
+  // always sees a well-formed shape (Requirement 6.6).
+  if (
+    typeof value !== 'object' ||
+    value === null ||
+    Array.isArray(value)
+  ) {
+    return { renditions: [], failures: [] };
+  }
+  const obj = value as { renditions?: unknown; failures?: unknown };
+  const renditions = Array.isArray(obj.renditions)
+    ? (obj.renditions as VariantSet['renditions'])
+    : [];
+  const failures = Array.isArray(obj.failures)
+    ? (obj.failures as VariantSet['failures'])
+    : [];
+  return { renditions, failures };
 }
 
 function mapMediaItem(row: MediaItemRow): MediaItem {
@@ -199,6 +229,8 @@ function mapMediaItem(row: MediaItemRow): MediaItem {
     captionsRef,
     transcript: row.transcript,
     embedUrl: row.embedUrl,
+    extension: row.extension,
+    variantSet: narrowVariantSet(row.variantSet),
   };
 }
 
@@ -212,6 +244,7 @@ interface ProjectRow {
   readonly softwareUsed: ReadonlyArray<string>;
   readonly creationDate: Date;
   readonly publishedAt: Date | null;
+  readonly scheduledAt: Date | null;
   readonly status: string;
   readonly featuredOrder: number | null;
   readonly createdAt: Date;
@@ -239,6 +272,7 @@ function mapProject(row: ProjectRow): Project {
     softwareUsed: [...row.softwareUsed],
     creationDate: asIsoDate(row.creationDate),
     publishedAt: row.publishedAt === null ? null : asIsoTimestamp(row.publishedAt),
+    scheduledAt: row.scheduledAt === null ? null : asIsoTimestamp(row.scheduledAt),
     status: narrowProjectStatus(row.status),
     featuredOrder: row.featuredOrder,
     createdAt: asIsoTimestamp(row.createdAt),
@@ -339,20 +373,26 @@ export async function listGalleryProjects(
 }
 
 /**
- * Resolve a project by its public slug. Returns `null` for both unknown
- * slugs and projects in `draft` status so the public 404 response is
- * byte-identical (Requirements 3.10, 8.7).
+ * Resolve a project by its public slug. Returns `null` for unknown slugs
+ * and for any project whose `status` is not `published` (i.e. `draft` or
+ * `scheduled`) so the public 404 response is byte-identical
+ * (Requirements 3.10, 7.10, 8.7).
+ *
+ * The `status = 'published'` predicate is folded into the Prisma `where`
+ * clause via `findFirst` (rather than the previous `findUnique` + post-
+ * fetch check) so scheduled and draft rows never enter the application
+ * layer at all (Requirements 7.9, 7.10). `slug` is unique in the schema,
+ * so `findFirst` returns at most one row.
  */
 export async function getProjectBySlug(slug: string): Promise<Project | null> {
   return safeRead(
     'getProjectBySlug',
     async () => {
-      const row = await prisma.project.findUnique({
-        where: { slug },
+      const row = await prisma.project.findFirst({
+        where: { slug, status: 'published' },
         include: PROJECT_INCLUDE,
       });
       if (row === null) return null;
-      if (row.status !== 'published') return null;
       return mapProject(row);
     },
     null,

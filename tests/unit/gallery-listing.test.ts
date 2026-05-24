@@ -53,6 +53,7 @@ function project(input: {
       status === 'published'
         ? ((input.publishedAt ?? NOW) as IsoTimestamp)
         : null,
+    scheduledAt: null,
     status,
     featuredOrder: null,
     createdAt: NOW as IsoTimestamp,

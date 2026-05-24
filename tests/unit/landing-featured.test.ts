@@ -46,6 +46,7 @@ function makeProject(spec: FixtureSpec): Project {
         : spec.publishedAt === null
           ? null
           : (spec.publishedAt as IsoTimestamp),
+    scheduledAt: null,
     status,
     featuredOrder: spec.featuredOrder ?? null,
     createdAt: "2024-01-01T00:00:00.000Z" as IsoTimestamp,

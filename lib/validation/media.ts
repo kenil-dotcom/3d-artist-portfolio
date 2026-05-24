@@ -106,17 +106,31 @@ export const ALLOWED_VIDEO_MIME_TYPES: ReadonlyArray<VideoMimeType> = [
 ];
 
 /**
- * Allowed 3D model MIME types per Requirement 8.3. `model/gltf-binary` is
- * the canonical MIME for `.glb` files; `model/gltf+json` covers `.gltf`.
+ * Allowed 3D model MIME types per Requirement 8.3 / 2.4 / 15.4.
+ *
+ *   - `model/gltf+json`    — canonical `.gltf` (JSON-form glTF).
+ *   - `model/gltf-binary`  — canonical `.glb`.
+ *   - `model/vnd.usdz+zip` — Apple AR Quick Look `.usdz` archive.
+ *
+ * The element type is widened locally to include `'model/vnd.usdz+zip'` so
+ * the validator can list the new format ahead of `lib/types/domain.ts`'s
+ * `ModelMimeType` being widened by the schema/types task. Once that task
+ * lands, this annotation collapses naturally to `ReadonlyArray<ModelMimeType>`
+ * because the literal becomes a member of the domain union.
  */
-export const ALLOWED_MODEL_MIME_TYPES: ReadonlyArray<ModelMimeType> = [
-  'model/gltf+json',
-  'model/gltf-binary',
-];
+export const ALLOWED_MODEL_MIME_TYPES: ReadonlyArray<
+  ModelMimeType | 'model/vnd.usdz+zip'
+> = ['model/gltf+json', 'model/gltf-binary', 'model/vnd.usdz+zip'];
 
-/** Per-kind allowlists exposed for consumers that need to mirror the rules. */
+/**
+ * Per-kind allowlists exposed for consumers that need to mirror the rules.
+ *
+ * The model3d slot is widened in lockstep with `ALLOWED_MODEL_MIME_TYPES`
+ * so callers like `inferKindFromMime` resolve `'model/vnd.usdz+zip'` to
+ * `'model3d'` purely by reading this map.
+ */
 export const ALLOWED_MIME_TYPES_BY_KIND: Readonly<
-  Record<MediaKind, ReadonlyArray<MediaMimeType>>
+  Record<MediaKind, ReadonlyArray<MediaMimeType | 'model/vnd.usdz+zip'>>
 > = {
   image: ALLOWED_IMAGE_MIME_TYPES,
   video: ALLOWED_VIDEO_MIME_TYPES,
@@ -201,4 +215,71 @@ function formatBytes(bytes: number): string {
     return Number.isInteger(mb) ? `${mb} MB` : `${mb.toFixed(2)} MB`;
   }
   return `${bytes} bytes`;
+}
+
+// ---------------------------------------------------------------------------
+// Per-item metadata normalisation (alt text and caption)
+// ---------------------------------------------------------------------------
+
+/**
+ * Trim regex covering only the four ASCII whitespace characters the
+ * Requirement 10 normalisation rules call out:
+ *
+ *   - U+0020 SPACE
+ *   - U+0009 TAB
+ *   - U+000D CR
+ *   - U+000A LF
+ *
+ * Non-ASCII whitespace such as U+00A0 (NBSP) and U+2028 (line separator) is
+ * preserved deliberately so authors can use them inside captions without the
+ * normaliser silently swallowing them. The regex is deliberately not the
+ * built-in `\s` class — `\s` would match the wider Unicode whitespace set we
+ * want to keep.
+ */
+const ALT_CAPTION_TRIM_RE = /^[\u0020\u0009\u000D\u000A]+|[\u0020\u0009\u000D\u000A]+$/g;
+
+/** Maximum stored length of `MediaItem.altText` per Requirement 10.1. */
+export const ALT_TEXT_MAX_LENGTH = 500;
+
+/** Maximum stored length of `MediaItem.caption` per Requirement 10.2. */
+export const CAPTION_MAX_LENGTH = 200;
+
+function trimAltCaption(input: string): string {
+  return input.replace(ALT_CAPTION_TRIM_RE, '');
+}
+
+/**
+ * Normalise an alt-text input for storage on `MediaItem.altText`.
+ *
+ * Returns `null` when the input is empty after trimming the ASCII whitespace
+ * categories above (Requirement 10.4). Otherwise returns the trimmed string
+ * clamped to {@link ALT_TEXT_MAX_LENGTH} characters (Requirement 10.1, 10.3).
+ *
+ * The function is pure and idempotent: `normalizeAltText(normalizeAltText(s) ?? '')`
+ * yields the same result as `normalizeAltText(s)` for every input `s`.
+ */
+export function normalizeAltText(input: string): string | null {
+  const trimmed = trimAltCaption(input);
+  if (trimmed.length === 0) return null;
+  return trimmed.length > ALT_TEXT_MAX_LENGTH
+    ? trimmed.slice(0, ALT_TEXT_MAX_LENGTH)
+    : trimmed;
+}
+
+/**
+ * Normalise a caption input for storage on `MediaItem.caption`.
+ *
+ * Returns `null` when the input is empty after trimming the ASCII whitespace
+ * categories above (Requirement 10.4). Otherwise returns the trimmed string
+ * clamped to {@link CAPTION_MAX_LENGTH} characters (Requirement 10.2, 10.3).
+ *
+ * The function is pure and idempotent for the same reason as
+ * {@link normalizeAltText}.
+ */
+export function normalizeCaption(input: string): string | null {
+  const trimmed = trimAltCaption(input);
+  if (trimmed.length === 0) return null;
+  return trimmed.length > CAPTION_MAX_LENGTH
+    ? trimmed.slice(0, CAPTION_MAX_LENGTH)
+    : trimmed;
 }

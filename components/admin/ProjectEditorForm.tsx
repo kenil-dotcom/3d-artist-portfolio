@@ -48,7 +48,7 @@ interface ProjectInitial {
   readonly tagIds: ReadonlyArray<string>;
   readonly softwareUsed: ReadonlyArray<string>;
   readonly creationDate: string;
-  readonly status: 'draft' | 'published';
+  readonly status: 'draft' | 'scheduled' | 'published';
   readonly coverMediaId: string | null;
   readonly featuredOrder: string;
 }
@@ -154,7 +154,11 @@ export function ProjectEditorForm({
         </h2>
 
         <div className="mt-6 grid gap-6 md:grid-cols-2">
-          <StatusField initialStatus={initial.status} />
+          <StatusField
+            initialStatus={
+              initial.status === 'published' ? 'published' : 'draft'
+            }
+          />
           <FeaturedOrderField
             initial={initial.featuredOrder}
             error={state.errors['featuredOrder']}

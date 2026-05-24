@@ -53,6 +53,7 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     softwareUsed: [],
     creationDate: "2024-05-12" as IsoDate,
     publishedAt: "2024-05-12T00:00:00.000Z" as IsoTimestamp,
+    scheduledAt: null,
     status: "published",
     featuredOrder: null,
     createdAt: "2024-05-01T00:00:00.000Z" as IsoTimestamp,
@@ -102,6 +103,8 @@ function makeMediaItem(idSuffix: string, ordering: number): MediaItem {
     captionsRef: null,
     transcript: null,
     embedUrl: null,
+    extension: "jpg",
+    variantSet: { renditions: [], failures: [] },
   };
 }
 

@@ -53,6 +53,7 @@ function buildProject(overrides: BuildProjectOverrides = {}): Project {
     softwareUsed: [],
     creationDate: "2025-05-01" as IsoDate,
     publishedAt,
+    scheduledAt: null,
     status,
     featuredOrder: null,
     createdAt: "2025-04-01T00:00:00.000Z" as IsoTimestamp,

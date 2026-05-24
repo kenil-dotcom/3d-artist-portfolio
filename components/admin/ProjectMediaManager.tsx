@@ -75,7 +75,7 @@ interface ProjectMediaManagerProps {
   readonly projectId: string;
   readonly projectSlug: string;
   readonly projectTitle: string;
-  readonly status: 'draft' | 'published';
+  readonly status: 'draft' | 'scheduled' | 'published';
   readonly hasTitle: boolean;
   readonly hasSlug: boolean;
   readonly hasCategory: boolean;
@@ -606,7 +606,7 @@ function PublishCallout({
   onCopyLink,
   copyState,
 }: {
-  readonly status: 'draft' | 'published';
+  readonly status: 'draft' | 'scheduled' | 'published';
   readonly slug: string;
   readonly checklist: ReadonlyArray<ChecklistEntry>;
   readonly allGreen: boolean;

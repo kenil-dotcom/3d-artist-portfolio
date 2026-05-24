@@ -6,13 +6,24 @@
  * (when available) a thumbnail URL. The function is I/O-free, never throws
  * on bad inputs, and returns `null` when the input is not a recognised
  * format so the caller can show a validation error instead.
+ *
+ * Acceptance:
+ *   - input is non-empty after trimming
+ *   - input length is at most 2048 characters
+ *   - input parses as a `URL`
+ *   - URL scheme is exactly `https:`
+ *   - URL hostname is on the allowlist below
+ *   - the provider's id-extraction regex matches a valid id
+ * Anything else returns `null`.
+ *
+ * Validates: Requirements 9.1, 9.2, 9.3, 9.4
  */
 
 export type EmbedProvider = 'youtube' | 'vimeo';
 
 export interface EmbedParseResult {
   readonly provider: EmbedProvider;
-  /** Canonical embed URL safe to drop into an `<iframe src>` attribute. */
+  /** Canonical embed URL safe to drop into an `<iframe src>` attribute. Always begins with `https://`. */
   readonly embedUrl: string;
   /** Provider thumbnail URL, or `null` when the provider doesn't expose one. */
   readonly thumbnailUrl: string | null;
@@ -21,26 +32,20 @@ export interface EmbedParseResult {
 }
 
 /**
- * Recognised YouTube URL patterns:
- *   - https://www.youtube.com/watch?v=ID[&...]
- *   - https://youtube.com/watch?v=ID
- *   - https://m.youtube.com/watch?v=ID
- *   - https://music.youtube.com/watch?v=ID
- *   - https://youtu.be/ID
- *   - https://www.youtube.com/embed/ID
- *   - https://www.youtube.com/shorts/ID
- *   - https://www.youtube.com/live/ID
- *
- * Vimeo:
- *   - https://vimeo.com/{numeric_id}
- *   - https://player.vimeo.com/video/{numeric_id}
- *   - https://vimeo.com/channels/.../{numeric_id}
+ * Maximum URL string length accepted by the parser. Aligned with the
+ * `MediaItem.embedUrl` column width (`@db.VarChar(2048)`).
+ */
+export const MAX_EMBED_URL_LENGTH = 2048;
+
+/**
+ * Hostname allowlist enforced after `URL` parsing and lower-casing. Only
+ * these exact hosts are accepted; any other host (including subdomains such
+ * as `m.youtube.com` or `music.youtube.com`) is rejected so the surface
+ * area stays narrow and the parser's behaviour is auditable.
  */
 const YOUTUBE_HOSTS: ReadonlySet<string> = new Set([
   'youtube.com',
   'www.youtube.com',
-  'm.youtube.com',
-  'music.youtube.com',
   'youtu.be',
 ]);
 const VIMEO_HOSTS: ReadonlySet<string> = new Set([
@@ -58,8 +63,15 @@ const VIMEO_ID_PATTERN = /^[0-9]{6,15}$/u;
  * non-https scheme is rejected since both providers require https embeds.
  */
 export function parseEmbedUrl(input: string): EmbedParseResult | null {
+  if (typeof input !== 'string') {
+    return null;
+  }
+
   const trimmed = input.trim();
   if (trimmed.length === 0) {
+    return null;
+  }
+  if (trimmed.length > MAX_EMBED_URL_LENGTH) {
     return null;
   }
 

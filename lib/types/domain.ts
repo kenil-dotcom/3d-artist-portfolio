@@ -48,9 +48,10 @@ export type ContentHash = Brand<string, "ContentHash">;
 
 /**
  * Project publication status. `published` projects are visible to Visitors;
- * `draft` projects are CMS-only.
+ * `scheduled` projects flip to `published` at `scheduledAt`; `draft` projects
+ * are CMS-only.
  */
-export type ProjectStatus = "draft" | "published";
+export type ProjectStatus = "draft" | "scheduled" | "published";
 
 /**
  * Discriminator for the kind of media stored in a `MediaItem`.
@@ -70,7 +71,10 @@ export type VideoMimeType = "video/mp4" | "video/webm";
 /**
  * Allowed 3D model MIME types for project media items.
  */
-export type ModelMimeType = "model/gltf+json" | "model/gltf-binary";
+export type ModelMimeType =
+  | "model/gltf+json"
+  | "model/gltf-binary"
+  | "model/vnd.usdz+zip";
 
 /**
  * Union of every MIME type that may be carried by a `MediaRef`.
@@ -165,6 +169,20 @@ export interface MediaItem {
    * items leave it as `null`.
    */
   readonly embedUrl: string | null;
+  /**
+   * Lowercase file extension persisted from the validated MIME on upload
+   * (`jpg`, `png`, `webp`, `mp4`, `webm`, `glb`, `gltf`, `usdz`). Used by
+   * the public renderer to pick the correct viewer (notably the
+   * `<model-viewer>` vs Apple Quick Look split for `usdz`). Null for
+   * legacy rows whose extension was not recorded at upload time.
+   */
+  readonly extension: string | null;
+  /**
+   * Derived AVIF/WebP renditions plus a per-rendition failure log. The
+   * public renderer treats an empty `renditions` array as the legacy
+   * fallback path (Requirement 6.6).
+   */
+  readonly variantSet: VariantSet;
 }
 
 // ---------------------------------------------------------------------------
@@ -196,6 +214,12 @@ export interface Project {
   readonly creationDate: IsoDate;
   /** Set when status flips to `published`; cleared on unpublish. */
   readonly publishedAt: IsoTimestamp | null;
+  /**
+   * Future UTC timestamp at which a `scheduled` Project transitions to
+   * `published`. Non-null exactly when `status === 'scheduled'`; cleared on
+   * any other status (Requirement 7.5–7.6).
+   */
+  readonly scheduledAt: IsoTimestamp | null;
   readonly status: ProjectStatus;
   /**
    * Position in the featured list, 0..11 if featured, `null` otherwise.
@@ -243,5 +267,109 @@ export interface Bio {
   readonly socialLinks: ReadonlyArray<SocialLink>;
   /** PDF up to 20 MB; `null` when the Admin has not uploaded a CV. */
   readonly resume: MediaRef | null;
+  readonly updatedAt: IsoTimestamp;
+}
+// ---------------------------------------------------------------------------
+// Variant_Set
+// ---------------------------------------------------------------------------
+
+/**
+ * Image rendition format produced by the variant pipeline. Both formats are
+ * generated for every selected width to give the browser two acceptable
+ * options inside a `<picture>` element.
+ */
+export type VariantFormat = "avif" | "webp";
+
+/**
+ * A single derived rendition of an image Media_Item. One Variant per
+ * `(format, width)` pair; the public renderer picks the smallest acceptable
+ * rendition via a `<picture>` / `<source>` element (Requirement 6.5).
+ */
+export interface Variant {
+  readonly format: VariantFormat;
+  /** Target width in pixels; one of 400, 800, 1600, 2400. */
+  readonly width: number;
+  /** Resulting height in pixels after aspect-ratio-preserving resize. */
+  readonly height: number;
+  /** Public URL of the rendition object in R2. */
+  readonly storageKey: string;
+  /** Size of the rendition object in bytes. */
+  readonly byteSize: number;
+}
+
+/**
+ * Recorded failure for a single `(format, width)` rendition that exhausted
+ * its retry budget without succeeding (Requirement 6.4 / 6.7). Other
+ * renditions in the same set may still have succeeded.
+ */
+export interface VariantFailure {
+  readonly format: VariantFormat;
+  /** Target width that failed to encode. */
+  readonly width: number;
+  /** Sharp error message, truncated to at most 200 characters. */
+  readonly cause: string;
+}
+
+/**
+ * Map of derived renditions plus a per-rendition failure log for a single
+ * image Media_Item. Persisted on `MediaItem.variantSet` as JSON. Empty
+ * (`{ renditions: [], failures: [] }`) for video, model3d, and embed rows;
+ * the public renderer treats an empty `renditions` array as the legacy
+ * fallback path (Requirement 6.6).
+ */
+export interface VariantSet {
+  readonly renditions: ReadonlyArray<Variant>;
+  readonly failures: ReadonlyArray<VariantFailure>;
+}
+
+// ---------------------------------------------------------------------------
+// Section_Block
+// ---------------------------------------------------------------------------
+
+export type SectionBlockId = Brand<string, "SectionBlockId">;
+
+/**
+ * Discriminator for the kind of body content carried by a Section_Block.
+ * `text` blocks carry sanitised HTML in `body`; the four media-bearing kinds
+ * carry one or two references to Media_Items belonging to the same Project.
+ */
+export type SectionBlockKind =
+  | "text"
+  | "image"
+  | "image_pair"
+  | "video"
+  | "model3d";
+
+/**
+ * A typed unit inside a Project's body. `body` is non-null exactly when
+ * `kind === 'text'`. `mediaItemId` is non-null for `image`, `video`,
+ * `model3d`, and the first slot of `image_pair`. `mediaItemBId` is non-null
+ * only for the second slot of `image_pair`. Application logic enforces that
+ * `(projectId, ordering)` forms a contiguous integer sequence starting at 0.
+ */
+export interface SectionBlock {
+  readonly id: SectionBlockId;
+  readonly projectId: ProjectId;
+  readonly kind: SectionBlockKind;
+  /** 0-based position within the project's section list. */
+  readonly ordering: number;
+  /**
+   * Sanitised HTML body for `text` kind, 1..10000 chars after trim and
+   * sanitisation. Null for media-bearing kinds.
+   */
+  readonly body: string | null;
+  /**
+   * Primary Media_Item reference for `image`, `video`, `model3d`, and the
+   * first slot of `image_pair`. Null for `text`. May become null if the
+   * referenced Media_Item is deleted (the relation is `SetNull`).
+   */
+  readonly mediaItemId: MediaItemId | null;
+  /**
+   * Secondary Media_Item reference for the second slot of `image_pair`.
+   * Null for every other kind. May become null if the referenced
+   * Media_Item is deleted.
+   */
+  readonly mediaItemBId: MediaItemId | null;
+  readonly createdAt: IsoTimestamp;
   readonly updatedAt: IsoTimestamp;
 }

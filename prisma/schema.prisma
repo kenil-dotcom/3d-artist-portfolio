@@ -32,7 +32,16 @@ datasource db {
 
 enum ProjectStatus {
   draft
+  scheduled
   published
+}
+
+enum SectionBlockKind {
+  text
+  image
+  image_pair
+  video
+  model3d
 }
 
 enum MediaKind {
@@ -88,8 +97,8 @@ enum ConsentDecision {
 // ---------------------------------------------------------------------------
 
 model Category {
-  id       String  @id
-  name     String  @db.VarChar(60)
+  id       String @id
+  name     String @db.VarChar(60)
   ordering Int
 
   projects Project[]
@@ -124,6 +133,7 @@ model Project {
   softwareUsed  String[]      @db.VarChar(60)
   creationDate  DateTime      @db.Date
   publishedAt   DateTime?
+  scheduledAt   DateTime?
   status        ProjectStatus @default(draft)
   /// Position in the featured set, 0..11; null when not featured. Distinct
   /// across all projects when set (enforced by `validateFeaturedIds`).
@@ -131,11 +141,13 @@ model Project {
   createdAt     DateTime      @default(now())
   updatedAt     DateTime      @updatedAt
 
-  mediaItems MediaItem[]  @relation("ProjectMedia")
-  tags       ProjectTag[]
+  mediaItems    MediaItem[]    @relation("ProjectMedia")
+  tags          ProjectTag[]
+  sectionBlocks SectionBlock[]
 
   @@index([status])
   @@index([publishedAt(sort: Desc)])
+  @@index([status, scheduledAt])
   @@map("projects")
 }
 
@@ -169,6 +181,19 @@ model MediaItem {
   caption     String?   @db.VarChar(200)
   ordering    Int
 
+  /// Lowercase file extension (e.g. `jpg`, `png`, `webp`, `mp4`, `webm`,
+  /// `glb`, `gltf`, `usdz`). Persisted from the validated MIME on upload via
+  /// the `MIME_TO_EXT` map and used by the public renderer to pick the
+  /// correct viewer (notably `<model-viewer>` vs Apple Quick Look for
+  /// `usdz`).
+  extension String? @db.VarChar(16)
+
+  /// Variant_Set payload — derived AVIF/WebP renditions for image kinds and a
+  /// per-rendition failure log. Empty `{}` for video, model3d, and embeds;
+  /// the public renderer treats an empty `renditions` array as the legacy
+  /// fallback path (Requirement 6.6).
+  variantSet Json @default("{}") @db.JsonB
+
   // Optional WebVTT captions track for video; flattened from MediaRef.
   captionsStorageKey  String? @db.VarChar(512)
   captionsContentHash String? @db.VarChar(64)
@@ -188,8 +213,47 @@ model MediaItem {
   /// for at most one project in practice; this is enforced in the app layer.
   coverFor Project[] @relation("ProjectCover")
 
+  /// Reverse relations for SectionBlock primary and secondary slots. Both
+  /// relations are `SetNull` on delete so deleting a Media_Item leaves the
+  /// section visible (with a "media missing" placeholder) rather than
+  /// cascading and silently deleting the block.
+  sectionBlocksPrimary   SectionBlock[] @relation("SectionBlockPrimary")
+  sectionBlocksSecondary SectionBlock[] @relation("SectionBlockSecondary")
+
   @@index([projectId, ordering])
   @@map("media_items")
+}
+
+/// A typed unit inside a Project's body. Five kinds: `text`, `image`,
+/// `image_pair`, `video`, `model3d`. `body` is non-null exactly when
+/// `kind = text`. `mediaItemId` is non-null for `image`, `video`, `model3d`,
+/// and the first slot of `image_pair`. `mediaItemBId` is non-null only for
+/// the second slot of `image_pair`. Application logic enforces that
+/// `(projectId, ordering)` forms a contiguous integer sequence starting at 0.
+model SectionBlock {
+  id        String           @id @default(uuid()) @db.Uuid
+  projectId String           @db.Uuid
+  project   Project          @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  kind      SectionBlockKind
+  ordering  Int
+
+  /// Sanitised HTML body for `text` kind; null for media-bearing kinds.
+  body String? @db.Text
+
+  /// Primary Media_Item reference for `image`, `video`, `model3d`, and the
+  /// first slot of `image_pair`. `SetNull` on delete preserves the block.
+  mediaItemId String?    @db.Uuid
+  mediaItem   MediaItem? @relation("SectionBlockPrimary", fields: [mediaItemId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  /// Secondary Media_Item reference for the second slot of `image_pair`.
+  mediaItemBId String?    @db.Uuid
+  mediaItemB   MediaItem? @relation("SectionBlockSecondary", fields: [mediaItemBId], references: [id], onDelete: SetNull, onUpdate: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([projectId, ordering])
+  @@map("section_blocks")
 }
 
 // ---------------------------------------------------------------------------
@@ -220,7 +284,7 @@ model Bio {
   resumeByteSize    Int?
 
   /// 0..30 entries, each 1..60 chars (validated in app).
-  skills String[] @db.VarChar(60)
+  skills   String[] @db.VarChar(60)
   /// 0..30 entries, each 1..60 chars (validated in app).
   software String[] @db.VarChar(60)
 
