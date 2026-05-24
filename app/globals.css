@@ -3,89 +3,109 @@
 @tailwind utilities;
 
 /*
- * Luxe palette — restrained, ivory on near-black, single champagne accent.
+ * Chocolate-boy palette.
  *
- * The aesthetic intentionally removes the colourful gradient mesh and
- * vivid amber from earlier iterations. Premium portfolios live or die on
- * restraint: one accent, one display serif, generous whitespace, slow
- * motion. Tokens are HSL triplets for Tailwind's `<alpha-value>` support.
+ * Warm cream paper background paired with a rich brown family — mocha,
+ * caramel, honey, amber. No pink, no cyan. Reads as cozy, sophisticated,
+ * approachable. Same playful structure (chunky borders, offset shadows,
+ * stickers) just dressed in warmer, more grown-up tones.
  *
  * Contrast (WCAG 2.1 AA, validated):
- *   foreground (#f1ece1 / ivory)   on background (#0a0a0a)  → 16.6:1  AAA
- *   muted      (#9a958c / warm)    on background            → 6.6:1   AA
- *   accent     (#c9a96e / champagne) on background          → 8.9:1   AAA
+ *   foreground (#1a1208 / espresso) on background (#fdf6e8 / cream)  → 17:1   AAA
+ *   muted      (#6b5135 / mocha)    on background                    → 6.5:1  AA
+ *   accent-caramel (#c89060) used as block-fill paired w/ espresso fg
+ *   accent-amber   (#e8a23a) used as block-fill paired w/ espresso fg
+ *   accent-honey   (#f7c850) used as block-fill paired w/ espresso fg
+ *   accent-sage    (#9bb087) used as block-fill paired w/ espresso fg
+ *   accent-mocha   (#7a4f2c) used as block-fill paired w/ cream fg
  */
 @layer base {
   :root {
-    --color-background: 0 0% 4%;
-    --color-surface: 24 5% 9%;
-    --color-foreground: 38 33% 92%;
-    --color-muted: 30 8% 58%;
-    --color-border: 30 6% 16%;
-    --color-accent: 35 45% 60%;
-    --color-accent-foreground: 0 0% 6%;
-    --color-ring: 35 45% 60%;
+    --color-background: 38 80% 95%;
+    --color-surface: 36 56% 90%;
+    --color-foreground: 28 50% 8%;
+    --color-muted: 28 32% 31%;
+    --color-border: 28 50% 12%;
+    --color-accent: 32 70% 58%;
+    --color-accent-foreground: 28 50% 8%;
+    --color-ring: 32 70% 58%;
 
-    /* Slower, more deliberate motion timings. Luxury reads as patient. */
+    /* Warm pop accents. The site rotates through these on tile cards,
+       badges, and decorative bits. All hand-tuned to feel like baked
+       goods and warm afternoon light. */
+    --color-pop-honey: 44 92% 64%;
+    --color-pop-amber: 33 80% 56%;
+    --color-pop-caramel: 26 50% 58%;
+    --color-pop-mocha: 24 48% 32%;
+    --color-pop-sage: 92 22% 60%;
+    --color-pop-cocoa: 18 38% 22%;
+
+    /* Motion timings. */
+    --ease-pop: cubic-bezier(0.34, 1.56, 0.64, 1);
     --ease-soft: cubic-bezier(0.22, 1, 0.36, 1);
-    --ease-luxe: cubic-bezier(0.65, 0, 0.35, 1);
 
-    /* Display serif stack — Cormorant first for warmth, falling back to
-       system serifs so the page never sees an unstyled flash. The font
-       is loaded by next/font in `app/layout.tsx`. */
+    /* Display & body fonts. Loaded by next/font in app/layout.tsx. */
     --font-display:
-      var(--font-display-serif), 'Cormorant Garamond', 'Bodoni 72', 'Didot',
-      'Times New Roman', Georgia, serif;
+      var(--font-display-sans), 'Space Grotesk', 'Inter', system-ui,
+      sans-serif;
+    --font-mono:
+      var(--font-mono-sans), 'JetBrains Mono', ui-monospace, 'Cascadia Code',
+      Menlo, monospace;
     --font-sans:
       ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
-      'SF Pro Text', 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
+      'SF Pro Text', 'Segoe UI', Roboto, sans-serif;
   }
 
   html {
     scroll-behavior: smooth;
-    color-scheme: dark;
+    color-scheme: light;
     background: hsl(var(--color-background));
   }
 
   body {
     @apply bg-background text-foreground antialiased;
     font-family: var(--font-sans);
-    /* Subtle vignette — barely perceptible warm lift in the upper centre,
-       nothing decorative. Removed the colourful radial mesh from the
-       earlier iteration. */
+    /* Warm latte glow — caramel and honey pools instead of the previous
+       yellow/pink/mint mix. */
     background-image:
       radial-gradient(
-        ellipse 1200px 600px at 50% -10%,
-        hsl(35 25% 18% / 0.35) 0%,
-        transparent 65%
+        ellipse 1000px 500px at 90% -5%,
+        hsl(var(--color-pop-honey) / 0.18) 0%,
+        transparent 60%
+      ),
+      radial-gradient(
+        ellipse 800px 600px at 5% 30%,
+        hsl(var(--color-pop-caramel) / 0.16) 0%,
+        transparent 60%
+      ),
+      radial-gradient(
+        ellipse 600px 400px at 50% 95%,
+        hsl(var(--color-pop-sage) / 0.12) 0%,
+        transparent 60%
       );
     background-attachment: fixed;
   }
 
   :focus-visible {
-    @apply outline-none ring-1 ring-ring ring-offset-2 ring-offset-background;
+    @apply outline-none ring-2 ring-ring ring-offset-2 ring-offset-background;
   }
 
   ::selection {
-    background: hsl(var(--color-accent));
-    color: hsl(var(--color-accent-foreground));
+    background: hsl(var(--color-pop-honey));
+    color: hsl(var(--color-foreground));
   }
 
-  /* Hairline scrollbar in the same warm palette. */
   ::-webkit-scrollbar {
-    width: 8px;
-    height: 8px;
+    width: 12px;
+    height: 12px;
   }
   ::-webkit-scrollbar-track {
     background: hsl(var(--color-background));
   }
   ::-webkit-scrollbar-thumb {
-    background: hsl(var(--color-border));
-    border-radius: 8px;
-    border: 2px solid hsl(var(--color-background));
-  }
-  ::-webkit-scrollbar-thumb:hover {
-    background: hsl(var(--color-muted) / 0.6);
+    background: hsl(var(--color-pop-cocoa));
+    border-radius: 9999px;
+    border: 3px solid hsl(var(--color-background));
   }
 }
 
@@ -96,125 +116,176 @@
 
   .responsive-image-frame img {
     @apply h-full w-full object-cover;
-    transition: transform 1400ms var(--ease-soft);
+    transition: transform 700ms var(--ease-pop);
     will-change: transform;
   }
 
   .group:hover .responsive-image-frame img,
   .group:focus-visible .responsive-image-frame img {
-    transform: scale(1.04);
+    transform: scale(1.06) rotate(-0.5deg);
   }
 
   .surface-card {
-    @apply rounded-none border border-border bg-surface;
+    @apply rounded-3xl border-2 border-foreground bg-background;
   }
 
-  /* Buttons — square edges, hairline borders. No drop shadows; luxury
-     reads flat. The primary button uses a thin accent rule beneath the
-     label that grows on hover, the way a serif underline behaves. */
+  /* Buttons — chunky, rounded pills. Primary uses a deep cocoa shadow,
+     secondary uses caramel. Both lift on hover and press on click. */
   .btn-primary {
-    @apply relative inline-flex items-center justify-center bg-foreground px-7 py-3 text-xs font-medium uppercase tracking-[0.2em] text-background focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
-    transition: background-color 600ms var(--ease-soft),
-      color 600ms var(--ease-soft);
+    @apply relative inline-flex items-center justify-center rounded-full border-2 border-foreground bg-foreground px-7 py-3 text-sm font-semibold text-background focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+    box-shadow: 4px 4px 0 0 hsl(var(--color-pop-caramel));
+    transition:
+      transform 280ms var(--ease-pop),
+      box-shadow 280ms var(--ease-pop),
+      background-color 280ms var(--ease-soft);
   }
   .btn-primary:hover {
-    background: hsl(var(--color-accent));
-    color: hsl(var(--color-accent-foreground));
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0 0 hsl(var(--color-pop-caramel));
+  }
+  .btn-primary:active {
+    transform: translate(2px, 2px);
+    box-shadow: 0 0 0 0 hsl(var(--color-pop-caramel));
+    transition-duration: 80ms;
   }
 
   .btn-secondary {
-    @apply relative inline-flex items-center justify-center border border-border bg-transparent px-7 py-3 text-xs font-medium uppercase tracking-[0.2em] text-foreground focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
-    transition: border-color 600ms var(--ease-soft),
-      color 600ms var(--ease-soft);
+    @apply relative inline-flex items-center justify-center rounded-full border-2 border-foreground bg-background px-7 py-3 text-sm font-semibold text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+    box-shadow: 4px 4px 0 0 hsl(var(--color-pop-mocha));
+    transition:
+      transform 280ms var(--ease-pop),
+      box-shadow 280ms var(--ease-pop);
   }
   .btn-secondary:hover {
-    border-color: hsl(var(--color-accent));
-    color: hsl(var(--color-accent));
+    transform: translate(-2px, -2px);
+    box-shadow: 6px 6px 0 0 hsl(var(--color-pop-mocha));
+  }
+  .btn-secondary:active {
+    transform: translate(2px, 2px);
+    box-shadow: 0 0 0 0 hsl(var(--color-pop-mocha));
+    transition-duration: 80ms;
   }
 
   .chip {
-    @apply inline-flex items-center border border-border bg-transparent px-4 py-1.5 text-[11px] font-medium uppercase tracking-[0.16em] text-muted;
-    transition: border-color 500ms var(--ease-soft),
-      color 500ms var(--ease-soft),
-      background-color 500ms var(--ease-soft);
+    @apply inline-flex items-center rounded-full border-2 border-foreground bg-background px-4 py-1.5 text-xs font-semibold text-foreground;
+    transition:
+      transform 240ms var(--ease-pop),
+      background-color 240ms var(--ease-soft);
   }
   .chip:hover {
-    border-color: hsl(var(--color-foreground) / 0.4);
-    color: hsl(var(--color-foreground));
+    transform: translateY(-2px) rotate(-1.5deg);
+    background: hsl(var(--color-pop-honey));
   }
   .chip-active {
-    border-color: hsl(var(--color-accent));
-    color: hsl(var(--color-accent));
-    background: transparent;
+    background: hsl(var(--color-pop-amber));
   }
 
   .input-field {
-    @apply w-full border border-border bg-transparent px-4 py-3 text-base text-foreground placeholder:text-muted/60 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
-    transition: border-color 400ms var(--ease-soft);
+    @apply w-full rounded-2xl border-2 border-foreground bg-background px-4 py-3 text-base text-foreground placeholder:text-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background;
+    transition: border-color 200ms var(--ease-soft), box-shadow 200ms var(--ease-soft);
   }
-  .input-field:hover {
-    border-color: hsl(var(--color-foreground) / 0.3);
+  .input-field:focus {
+    box-shadow: 4px 4px 0 0 hsl(var(--color-pop-honey));
   }
 
   .label-field {
-    @apply mb-2 block text-[10px] font-medium uppercase tracking-[0.24em] text-muted;
+    @apply mb-2 block text-xs font-semibold uppercase tracking-[0.18em] text-foreground;
   }
 
-  /* Tile — flat, hairline frame, slow lift. No box-shadow. */
+  /* Tile cards — chunky, rounded, hard border with a colored drop
+     shadow. Cycle through honey / caramel / sage on each row of three
+     for a warm, rotating warm palette across the gallery. */
   .tile-card {
-    @apply block overflow-hidden border border-border bg-surface;
+    @apply block overflow-hidden rounded-3xl border-2 border-foreground bg-background;
     transition:
-      transform 900ms var(--ease-soft),
-      border-color 900ms var(--ease-soft);
+      transform 380ms var(--ease-pop),
+      box-shadow 380ms var(--ease-pop);
     will-change: transform;
+    box-shadow: 6px 6px 0 0 hsl(var(--color-pop-honey));
   }
   .tile-card:hover {
-    transform: translateY(-2px);
-    border-color: hsl(var(--color-foreground) / 0.25);
+    transform: translate(-3px, -3px) rotate(-0.4deg);
+    box-shadow: 10px 10px 0 0 hsl(var(--color-pop-honey));
   }
 
-  /* Display — serif, larger sizes, looser leading. The signature voice. */
+  ul li:nth-child(3n + 1) .tile-card {
+    box-shadow: 6px 6px 0 0 hsl(var(--color-pop-honey));
+  }
+  ul li:nth-child(3n + 1) .tile-card:hover {
+    box-shadow: 10px 10px 0 0 hsl(var(--color-pop-honey));
+  }
+  ul li:nth-child(3n + 2) .tile-card {
+    box-shadow: 6px 6px 0 0 hsl(var(--color-pop-caramel));
+  }
+  ul li:nth-child(3n + 2) .tile-card:hover {
+    box-shadow: 10px 10px 0 0 hsl(var(--color-pop-caramel));
+  }
+  ul li:nth-child(3n + 3) .tile-card {
+    box-shadow: 6px 6px 0 0 hsl(var(--color-pop-sage));
+  }
+  ul li:nth-child(3n + 3) .tile-card:hover {
+    box-shadow: 10px 10px 0 0 hsl(var(--color-pop-sage));
+  }
+
+  /* Display headline — chunky display sans, italic accent in deep
+     amber-caramel rather than pink. */
   .display-headline {
     font-family: var(--font-display);
-    font-weight: 400;
-    @apply text-5xl leading-[1.05] tracking-[-0.01em] md:text-7xl lg:text-[6rem];
+    font-weight: 600;
+    @apply text-5xl leading-[1.0] tracking-[-0.03em] md:text-7xl lg:text-[7rem];
     text-wrap: balance;
   }
-
   .display-headline em {
     font-style: italic;
-    color: hsl(var(--color-accent));
+    color: hsl(var(--color-pop-amber));
+    position: relative;
   }
 
   .eyebrow {
-    @apply text-[10px] font-medium uppercase tracking-[0.32em] text-muted;
+    @apply inline-block rounded-full border-2 border-foreground bg-background px-3 py-1 text-[10px] font-bold uppercase tracking-[0.2em] text-foreground;
   }
 
-  /* Thin horizontal rule used as a section divider, with a small notch
-     of accent at the start — a subtle nod to luxury house identity. */
+  /* "Sticker" badge — colored fill, rotated slightly, hard border. */
+  .sticker {
+    @apply inline-flex items-center rounded-full border-2 border-foreground px-4 py-1.5 text-xs font-bold uppercase tracking-[0.16em] text-foreground;
+    transform: rotate(-2deg);
+  }
+
+  /* Squiggly underline used on inline links — caramel SVG stroke. */
+  .squiggle {
+    background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 6' preserveAspectRatio='none'><path d='M0 3 Q 8 0 16 3 T 32 3' stroke='%23c89060' stroke-width='2' fill='none' stroke-linecap='round'/></svg>");
+    background-repeat: repeat-x;
+    background-position: 0 100%;
+    background-size: 32px 6px;
+    padding-bottom: 6px;
+  }
+
+  /* Section divider rule with a caramel block at start. */
   .luxe-rule {
     position: relative;
-    height: 1px;
-    background: hsl(var(--color-border));
+    height: 2px;
+    background: hsl(var(--color-foreground));
   }
   .luxe-rule::before {
     content: '';
     position: absolute;
     left: 0;
-    top: 0;
-    width: 28px;
-    height: 1px;
-    background: hsl(var(--color-accent));
+    top: -6px;
+    width: 14px;
+    height: 14px;
+    border-radius: 9999px;
+    background: hsl(var(--color-pop-caramel));
+    border: 2px solid hsl(var(--color-foreground));
   }
 }
 
 @layer utilities {
   .reveal {
     opacity: 0;
-    transform: translateY(28px);
+    transform: translateY(24px);
     transition:
-      opacity 1200ms var(--ease-soft),
-      transform 1200ms var(--ease-soft);
+      opacity 700ms var(--ease-soft),
+      transform 700ms var(--ease-pop);
     will-change: opacity, transform;
   }
   .reveal-in {
@@ -222,24 +293,58 @@
     transform: translateY(0);
   }
 
+  .ease-pop {
+    transition-timing-function: var(--ease-pop);
+  }
   .ease-soft {
     transition-timing-function: var(--ease-soft);
   }
 
-  /* Vignette wrapper used for the hero - a single warm pool of light
-     instead of a colourful mesh. */
+  /* Hero gradient blob — warm latte tones drifting slowly. */
   .hero-halo {
     pointer-events: none;
     position: absolute;
-    inset: -30% -10% auto -10%;
-    height: 110%;
-    background: radial-gradient(
-      ellipse 800px 400px at 30% 30%,
-      hsl(35 30% 20% / 0.5) 0%,
-      transparent 70%
-    );
-    filter: blur(40px);
+    inset: -10% -20% auto -20%;
+    height: 130%;
+    background:
+      radial-gradient(
+        circle at 25% 35%,
+        hsl(var(--color-pop-honey) / 0.55) 0%,
+        transparent 45%
+      ),
+      radial-gradient(
+        circle at 75% 25%,
+        hsl(var(--color-pop-caramel) / 0.45) 0%,
+        transparent 45%
+      ),
+      radial-gradient(
+        circle at 50% 70%,
+        hsl(var(--color-pop-sage) / 0.35) 0%,
+        transparent 50%
+      );
+    filter: blur(50px);
     z-index: -1;
+    animation: blob-drift 22s ease-in-out infinite alternate;
+  }
+
+  @keyframes blob-drift {
+    0% {
+      transform: translate(0, 0) rotate(0deg);
+    }
+    50% {
+      transform: translate(2%, -1%) rotate(0.5deg);
+    }
+    100% {
+      transform: translate(-1%, 1%) rotate(-0.5deg);
+    }
+  }
+
+  @keyframes wiggle {
+    0%, 100% { transform: rotate(-2deg); }
+    50% { transform: rotate(2deg); }
+  }
+  .animate-wiggle {
+    animation: wiggle 3s ease-in-out infinite;
   }
 
   @media (prefers-reduced-motion: reduce) {
@@ -258,14 +363,23 @@
     }
     .group:hover .responsive-image-frame img,
     .group:focus-visible .responsive-image-frame img,
-    .tile-card:hover {
+    .tile-card:hover,
+    .btn-primary:hover,
+    .btn-secondary:hover,
+    .chip:hover {
       transform: none !important;
+    }
+    .hero-halo,
+    .animate-wiggle {
+      animation: none !important;
     }
   }
 }
 
 /* ---------------------------------------------------------------------------
-   Custom cursor
+   Custom cursor — chocolate edition.
+   Trail dot in deep cocoa, ring fills honey on hover, label pill in
+   caramel with cream type.
    --------------------------------------------------------------------------- */
 
 body[data-cursor-active='true'] {
@@ -302,53 +416,52 @@ body[data-cursor-mode='text'] [contenteditable='true'] {
 }
 
 .custom-cursor-dot {
-  width: 6px;
-  height: 6px;
-  margin-left: -3px;
-  margin-top: -3px;
+  width: 8px;
+  height: 8px;
+  margin-left: -4px;
+  margin-top: -4px;
   border-radius: 9999px;
-  background: hsl(var(--color-foreground));
-  mix-blend-mode: difference;
-  transition: opacity 320ms var(--ease-soft);
+  background: hsl(var(--color-pop-cocoa));
+  transition: opacity 280ms var(--ease-soft);
 }
 
 .custom-cursor-ring {
-  width: 32px;
-  height: 32px;
-  margin-left: -16px;
-  margin-top: -16px;
+  width: 36px;
+  height: 36px;
+  margin-left: -18px;
+  margin-top: -18px;
   border-radius: 9999px;
-  border: 1px solid hsl(var(--color-foreground) / 0.32);
+  border: 2px solid hsl(var(--color-foreground));
   background: transparent;
   transition:
-    width 500ms var(--ease-soft),
-    height 500ms var(--ease-soft),
-    margin 500ms var(--ease-soft),
-    border-color 500ms var(--ease-soft),
-    background-color 500ms var(--ease-soft),
-    opacity 320ms var(--ease-soft);
+    width 380ms var(--ease-pop),
+    height 380ms var(--ease-pop),
+    margin 380ms var(--ease-pop),
+    border-color 380ms var(--ease-soft),
+    background-color 380ms var(--ease-soft),
+    opacity 280ms var(--ease-soft);
 }
 .custom-cursor-ring[data-state='subtle'] {
-  width: 44px;
-  height: 44px;
-  margin-left: -22px;
-  margin-top: -22px;
-  border-color: hsl(var(--color-accent) / 0.6);
+  width: 48px;
+  height: 48px;
+  margin-left: -24px;
+  margin-top: -24px;
+  background: hsl(var(--color-pop-honey) / 0.5);
 }
 .custom-cursor-ring[data-state='strong'] {
-  width: 72px;
-  height: 72px;
-  margin-left: -36px;
-  margin-top: -36px;
-  border-color: hsl(var(--color-accent));
+  width: 80px;
+  height: 80px;
+  margin-left: -40px;
+  margin-top: -40px;
+  background: hsl(var(--color-pop-honey));
 }
 .custom-cursor-ring[data-click='true'] {
-  width: 24px !important;
-  height: 24px !important;
-  margin-left: -12px !important;
-  margin-top: -12px !important;
-  border-color: hsl(var(--color-accent));
-  transition-duration: 160ms;
+  width: 28px !important;
+  height: 28px !important;
+  margin-left: -14px !important;
+  margin-top: -14px !important;
+  background: hsl(var(--color-pop-amber)) !important;
+  transition-duration: 120ms;
 }
 
 body[data-cursor-visible='false'] .custom-cursor-dot,
@@ -359,22 +472,25 @@ body[data-cursor-visible='false'] .custom-cursor-label {
 
 .custom-cursor-label {
   padding: 5px 12px;
-  border: 1px solid hsl(var(--color-accent));
-  background: hsl(var(--color-background));
-  color: hsl(var(--color-accent));
-  font-size: 10px;
-  font-weight: 500;
-  letter-spacing: 0.2em;
+  border: 2px solid hsl(var(--color-foreground));
+  background: hsl(var(--color-pop-caramel));
+  color: hsl(var(--color-foreground));
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
   text-transform: uppercase;
   white-space: nowrap;
+  border-radius: 9999px;
   opacity: 0;
   transform-origin: top left;
+  transform: rotate(-3deg);
   transition:
-    opacity 360ms var(--ease-soft),
-    transform 360ms var(--ease-soft);
+    opacity 320ms var(--ease-pop),
+    transform 320ms var(--ease-pop);
 }
 .custom-cursor-label[data-state='visible'] {
   opacity: 1;
+  transform: rotate(-3deg) scale(1);
 }
 
 @media (prefers-reduced-motion: reduce), (pointer: coarse), (hover: none) {

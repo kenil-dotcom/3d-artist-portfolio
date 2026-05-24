@@ -22,13 +22,13 @@ export default function ContactPage(): ReactElement {
   return (
     <div className="mx-auto max-w-3xl px-6 py-24">
       <header className="mb-16">
-        <p className="eyebrow">Contact</p>
+        <span className="eyebrow">Contact</span>
         <h1 className="mt-4 display-headline">
-          Get in <em>touch</em>.
+          Say <em>hi</em>.
         </h1>
         <p className="mt-6 max-w-xl text-lg text-muted">
-          Send a quick message about a project, collaboration, or simply to say
-          hello.
+          Got a question, a brief, or just want to nerd out about renders?
+          Drop a note. I read everything.
         </p>
         <div className="luxe-rule mt-12" aria-hidden="true" />
       </header>

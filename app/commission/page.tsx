@@ -21,13 +21,13 @@ export default function CommissionPage(): ReactElement {
   return (
     <div className="mx-auto max-w-3xl px-6 py-24">
       <header className="mb-16">
-        <p className="eyebrow">Commission</p>
+        <span className="eyebrow">Commission</span>
         <h1 className="mt-4 display-headline">
-          Begin a <em>commission</em>.
+          Let&apos;s build <em>something</em>.
         </h1>
         <p className="mt-6 max-w-xl text-lg text-muted">
-          Share a few details about your project and I&apos;ll respond within
-          two business days.
+          Tell me about your project. I&apos;ll reply within two business days
+          with thoughts, questions, and a rough plan.
         </p>
         <div className="luxe-rule mt-12" aria-hidden="true" />
       </header>

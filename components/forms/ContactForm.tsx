@@ -25,9 +25,7 @@ interface SubmissionResponse {
   readonly redirectTo?: string;
 }
 
-const FIELD_NAMES = ['name', 'email', 'subject', 'message'] as const;
-
-type FieldName = (typeof FIELD_NAMES)[number];
+type FieldName = 'name' | 'email' | 'subject' | 'message';
 
 const HUMAN_LABEL: Record<FieldName, string> = {
   name: 'Name',

@@ -28,7 +28,7 @@ export default async function AboutPage(): Promise<ReactElement> {
   return (
     <div className="mx-auto max-w-5xl px-6 py-24">
       <Reveal as="header" className="mb-20 grid gap-16 md:grid-cols-[1fr_2fr] md:items-center">
-        <div className="overflow-hidden border border-border bg-surface">
+        <div className="overflow-hidden rounded-3xl border-2 border-foreground bg-surface" style={{ boxShadow: '8px 8px 0 0 hsl(var(--color-pop-caramel))' }}>
           {hasProfileImage && bio.profileImage !== null ? (
             <ResponsiveImage
               src={bio.profileImage.storageKey}
@@ -40,16 +40,16 @@ export default async function AboutPage(): Promise<ReactElement> {
           ) : (
             <div
               aria-hidden="true"
-              className="flex aspect-square w-full items-center justify-center bg-gradient-to-br from-surface to-background font-[family-name:var(--font-display)] text-7xl italic text-muted/40"
+              className="flex aspect-square w-full items-center justify-center bg-gradient-to-br from-[hsl(var(--color-pop-honey))] to-[hsl(var(--color-pop-caramel))] font-[family-name:var(--font-display)] text-7xl font-bold text-foreground"
             >
               {(bio.artistName || '3D').slice(0, 2).toLowerCase()}
             </div>
           )}
         </div>
         <div>
-          <p className="eyebrow">Portrait</p>
+          <span className="eyebrow">Hi, hello</span>
           <h1 className="mt-4 display-headline">
-            {bio.artistName || 'About the artist'}.
+            I&apos;m <em>{bio.artistName || 'an artist'}</em>.
           </h1>
           {bio.tagline.trim().length > 0 ? (
             <p className="mt-6 max-w-xl text-lg leading-relaxed text-muted">

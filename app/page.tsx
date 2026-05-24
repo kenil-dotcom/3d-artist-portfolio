@@ -32,12 +32,12 @@ export default async function HomePage(): Promise<ReactElement> {
       >
         <Reveal className="mb-12 flex flex-wrap items-end justify-between gap-4">
           <div>
-            <p className="eyebrow">Selected work</p>
+            <span className="eyebrow">Greatest hits</span>
             <h2
               id="featured-heading"
-              className="mt-4 font-[family-name:var(--font-display)] text-4xl font-normal tracking-[-0.01em] md:text-6xl"
+              className="mt-4 font-[family-name:var(--font-display)] text-4xl font-semibold tracking-[-0.02em] md:text-6xl"
             >
-              Featured <em className="italic text-accent">projects</em>.
+              The <em>good stuff</em>.
             </h2>
             <p className="mt-3 max-w-xl text-base text-muted">
               A rotating selection. The full archive lives in the gallery.
@@ -45,10 +45,10 @@ export default async function HomePage(): Promise<ReactElement> {
           </div>
           <Link
             href="/gallery"
-            className="text-xs uppercase tracking-[0.2em] text-accent transition-colors duration-500 ease-soft hover:text-foreground"
+            className="text-sm font-semibold text-foreground squiggle"
             data-cursor-label="see all"
           >
-            View archive →
+            See everything →
           </Link>
         </Reveal>
 
@@ -94,44 +94,48 @@ function Hero({ artistName, tagline }: HeroProps): ReactElement {
       ? tagline
       : 'Worlds, characters, and product stories rendered in 3D.';
   return (
-    <section className="relative isolate mx-auto max-w-6xl px-6 pb-32 pt-32 md:pt-44">
+    <section className="relative isolate mx-auto max-w-6xl px-6 pb-24 pt-24 md:pt-32">
       <div className="hero-halo" aria-hidden="true" />
 
-      <Reveal className="eyebrow">
-        Studio of Sid07 — 3D &amp; Image Making
+      <Reveal>
+        <span className="eyebrow">
+          <span className="mr-1.5 inline-block h-2 w-2 animate-pulse rounded-full bg-accent" />
+          Hey, I&apos;m {name}
+        </span>
       </Reveal>
 
       <Reveal delay={140}>
         <h1 className="mt-8 display-headline">
-          {name}.<br />
-          <em>Crafted in light.</em>
+          I make <em>worlds</em>
+          <br />
+          out of pixels.
         </h1>
       </Reveal>
 
       <Reveal delay={280}>
-        <p className="mt-10 max-w-xl text-lg leading-relaxed text-muted md:text-xl md:leading-relaxed">
+        <p className="mt-8 max-w-xl text-xl leading-relaxed text-muted md:text-2xl md:leading-relaxed">
           {headline}
         </p>
       </Reveal>
 
-      <Reveal delay={420} className="mt-12 flex flex-wrap gap-4">
+      <Reveal delay={420} className="mt-10 flex flex-wrap items-center gap-4">
         <Link
           href="/gallery"
           className="btn-primary"
-          data-cursor-label="enter"
+          data-cursor-label="let's go"
         >
-          Enter the gallery
+          Peek at the work →
         </Link>
         <Link
           href="/commission"
           className="btn-secondary"
-          data-cursor-label="say hello"
+          data-cursor-label="say hi"
         >
-          Begin a commission
+          Hire me ✿
         </Link>
       </Reveal>
 
-      <Reveal delay={560} className="mt-24">
+      <Reveal delay={560} className="mt-20">
         <div className="luxe-rule" aria-hidden="true" />
       </Reveal>
     </section>
@@ -233,24 +237,24 @@ function AboutTeaser({ biography }: AboutTeaserProps): ReactElement {
         ? `${trimmed.slice(0, 320).trimEnd()}…`
         : trimmed;
   return (
-    <section className="border-t border-border/70 bg-surface/40">
+    <section className="border-t-2 border-foreground bg-surface">
       <div className="mx-auto grid max-w-6xl gap-16 px-6 py-32 md:grid-cols-[1fr_2fr]">
         <Reveal>
-          <p className="eyebrow">About</p>
-          <h2 className="mt-4 font-[family-name:var(--font-display)] text-4xl font-normal tracking-[-0.01em] md:text-6xl">
+          <span className="eyebrow">About</span>
+          <h2 className="mt-4 font-[family-name:var(--font-display)] text-4xl font-semibold tracking-[-0.02em] md:text-6xl">
             A bit
             <br />
-            <em className="italic text-accent">of context.</em>
+            <em>about me</em>.
           </h2>
         </Reveal>
         <Reveal delay={140} className="space-y-6 text-lg leading-relaxed text-muted">
           <p>{preview}</p>
           <Link
             href="/about"
-            className="inline-block text-xs uppercase tracking-[0.2em] text-accent transition-colors duration-500 ease-soft hover:text-foreground"
-            data-cursor-label="learn more"
+            className="inline-block text-base font-semibold text-foreground squiggle"
+            data-cursor-label="more"
           >
-            Read the full bio →
+            Read the whole story →
           </Link>
         </Reveal>
       </div>

@@ -13,13 +13,15 @@ import type { ReactElement } from 'react';
 export default function NotFound(): ReactElement {
   return (
     <div className="mx-auto flex min-h-[60vh] max-w-2xl flex-col items-center justify-center px-6 py-32 text-center">
-      <p className="eyebrow">Error 404</p>
-      <h1 className="mt-6 display-headline">
-        Not <em>found</em>.
+      <span className="sticker animate-wiggle" style={{ background: 'hsl(var(--color-pop-honey))' }}>
+        Oops · 404
+      </span>
+      <h1 className="mt-8 display-headline">
+        This page <em>vanished</em>.
       </h1>
       <p className="mt-8 text-lg text-muted">
         The page or project you were looking for isn&apos;t available. It may
-        have moved or been removed.
+        have moved, been removed, or never existed.
       </p>
       <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
         <Link href="/gallery" className="btn-primary" data-cursor-label="back">

@@ -43,22 +43,23 @@ export function SiteHeader({ artistName }: SiteHeaderProps): ReactElement {
   return (
     <header
       data-scrolled={scrolled ? 'true' : 'false'}
-      className="sticky top-0 z-30 border-b transition-[background-color,border-color,backdrop-filter] duration-700 ease-soft data-[scrolled=false]:border-transparent data-[scrolled=false]:bg-background/0 data-[scrolled=false]:supports-[backdrop-filter]:bg-background/0 data-[scrolled=true]:border-border/70 data-[scrolled=true]:bg-background/85 data-[scrolled=true]:backdrop-blur supports-[backdrop-filter]:data-[scrolled=true]:bg-background/70"
+      className="sticky top-0 z-30 transition-[background-color,border-color,backdrop-filter] duration-500 ease-soft data-[scrolled=false]:border-b-2 data-[scrolled=false]:border-transparent data-[scrolled=false]:bg-background/0 data-[scrolled=true]:border-b-2 data-[scrolled=true]:border-foreground data-[scrolled=true]:bg-background/85 data-[scrolled=true]:backdrop-blur"
     >
-      <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-5">
+      <div className="mx-auto flex max-w-6xl items-center justify-between px-6 py-4">
         <Link
           href="/"
-          className="font-[family-name:var(--font-display)] text-lg italic text-foreground transition-colors duration-500 ease-soft hover:text-accent"
+          className="font-[family-name:var(--font-display)] text-xl font-bold tracking-[-0.03em] text-foreground"
         >
           {displayName}
+          <span className="ml-0.5 text-[hsl(var(--color-pop-amber))]">.</span>
         </Link>
         <nav aria-label="Primary">
-          <ul className="flex items-center gap-1 text-xs uppercase tracking-[0.2em] md:gap-3">
+          <ul className="flex items-center gap-1 text-sm font-semibold md:gap-3">
             {NAV_LINKS.map((link) => (
               <li key={link.href}>
                 <Link
                   href={link.href}
-                  className="rounded-none px-3 py-2 text-foreground/70 transition-colors duration-500 ease-soft hover:text-foreground"
+                  className="rounded-full px-4 py-2 text-foreground/80 transition-colors duration-300 ease-pop hover:bg-foreground hover:text-background"
                 >
                   {link.label}
                 </Link>
@@ -67,7 +68,7 @@ export function SiteHeader({ artistName }: SiteHeaderProps): ReactElement {
             <li>
               <Link
                 href="/commission"
-                className="btn-primary ml-3"
+                className="btn-primary ml-2"
                 data-cursor-label="let's talk"
               >
                 Hire me

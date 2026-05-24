@@ -64,7 +64,7 @@ async function parseRequest(req: NextRequest): Promise<ParsedSubmission | null> 
   const accept = (req.headers.get('accept') ?? '').toLowerCase();
   const wantsJson = accept.includes('application/json');
 
-  let raw: Record<string, string> = {};
+  const raw: Record<string, string> = {};
   try {
     if (contentType.includes('application/json')) {
       const body = (await req.json()) as Record<string, unknown>;
@@ -130,10 +130,6 @@ function clientIpFrom(req: NextRequest): string {
   const real = req.headers.get('x-real-ip');
   if (real) return truncateIp(real.trim());
   return '0.0.0.0';
-}
-
-function htmlRedirect(url: string): NextResponse {
-  return NextResponse.redirect(new URL(url, 'http://placeholder.local'), 303);
 }
 
 interface SuccessBody {

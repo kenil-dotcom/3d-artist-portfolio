@@ -25,19 +25,19 @@ export function SiteFooter({
   const year = new Date().getFullYear();
 
   return (
-    <footer className="border-t border-border/70 bg-background">
-      <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-12 text-xs uppercase tracking-[0.18em] text-muted md:flex-row md:items-center md:justify-between">
-        <p className="normal-case tracking-normal">
-          &copy; {year} {displayName}. All work shown for portfolio purposes.
+    <footer className="border-t-2 border-foreground bg-surface">
+      <div className="mx-auto flex max-w-6xl flex-col gap-6 px-6 py-12 text-sm text-muted md:flex-row md:items-center md:justify-between">
+        <p>
+          &copy; {year} {displayName}. Made with care &amp; too much coffee.
         </p>
-        <ul className="flex flex-wrap items-center gap-6">
+        <ul className="flex flex-wrap items-center gap-4">
           <li>
-            <Link href="/contact" className="hover:text-foreground">
+            <Link href="/contact" className="font-semibold hover:text-foreground squiggle">
               Contact
             </Link>
           </li>
           <li>
-            <Link href="/privacy" className="hover:text-foreground">
+            <Link href="/privacy" className="font-semibold hover:text-foreground">
               Privacy
             </Link>
           </li>
@@ -47,9 +47,9 @@ export function SiteFooter({
                 href={link.url}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="hover:text-foreground"
+                className="font-semibold hover:text-foreground"
               >
-                {link.platform}
+                {link.platform} ↗
               </a>
             </li>
           ))}

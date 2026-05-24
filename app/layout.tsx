@@ -1,5 +1,5 @@
 import type { Metadata } from 'next';
-import { Cormorant_Garamond } from 'next/font/google';
+import { Space_Grotesk } from 'next/font/google';
 import type { ReactNode } from 'react';
 
 import { SiteFooter } from '@/components/layout/SiteFooter';
@@ -10,16 +10,15 @@ import { getBio } from '@/lib/content/api';
 import './globals.css';
 
 /**
- * Display serif. Loaded by next/font so the font is hosted alongside the
- * application bundle (no third-party CDN, no FOUT). Exposed to CSS via a
- * `--font-display-serif` custom property consumed in `globals.css`.
+ * Display sans. Space Grotesk gives the headlines a chunky, geometric
+ * personality without feeling techy. Loaded via next/font so it ships
+ * with the bundle (no third-party CDN, no FOUT).
  */
-const displaySerif = Cormorant_Garamond({
+const displaySans = Space_Grotesk({
   subsets: ['latin'],
-  weight: ['400', '500', '600'],
-  style: ['normal', 'italic'],
+  weight: ['400', '500', '600', '700'],
   display: 'swap',
-  variable: '--font-display-serif',
+  variable: '--font-display-sans',
 });
 
 /**
@@ -46,7 +45,7 @@ export default async function RootLayout({
   const bio = await getBio();
 
   return (
-    <html lang="en" className={displaySerif.variable}>
+    <html lang="en" className={displaySans.variable}>
       <body className="flex min-h-screen flex-col bg-background text-foreground">
         <a
           href="#main-content"

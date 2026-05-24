@@ -15,13 +15,15 @@ export const metadata = {
 export default function ContactThanksPage(): ReactElement {
   return (
     <div className="mx-auto flex min-h-[60vh] max-w-2xl flex-col items-center justify-center px-6 py-32 text-center">
-      <p className="eyebrow">Sent</p>
-      <h1 className="mt-6 display-headline">
-        Message <em>received</em>.
+      <span className="sticker animate-wiggle" style={{ background: 'hsl(var(--color-pop-sage))' }}>
+        On its way ✿
+      </span>
+      <h1 className="mt-8 display-headline">
+        Got it. <em>Thanks!</em>
       </h1>
       <p className="mt-8 text-lg text-muted">
-        Thank you for reaching out. I&apos;ll reply within a couple of business
-        days. In the meantime, feel free to keep browsing the gallery.
+        Your message just landed in my inbox. I&apos;ll reply within a couple
+        of business days. Until then, keep exploring.
       </p>
       <div className="mt-10 flex flex-wrap items-center justify-center gap-3">
         <Link href="/gallery" className="btn-primary">

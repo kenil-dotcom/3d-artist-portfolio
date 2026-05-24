@@ -55,9 +55,9 @@ export default async function GalleryPage({
   return (
     <div className="mx-auto max-w-6xl px-6 py-24">
       <Reveal as="header" className="mb-16">
-        <p className="eyebrow">The archive</p>
+        <span className="eyebrow">Archive</span>
         <h1 className="mt-4 display-headline">
-          The <em>gallery</em>.
+          The whole <em>gallery</em>.
         </h1>
         <p className="mt-6 max-w-2xl text-lg text-muted">
           Browse the full body of work. Filter by category, narrow with tags,

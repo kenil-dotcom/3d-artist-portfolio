@@ -158,7 +158,7 @@ export function pickVariant(
   const target = Number.isFinite(viewportWidth) && viewportWidth > 0 ? viewportWidth : 0;
 
   let smallestAtLeastTarget: ImageVariant | null = null;
-  let largestOverall: ImageVariant = variants[0]!;
+  let largestOverall: ImageVariant = variants[0] as ImageVariant;
 
   for (const variant of variants) {
     if (variant.width > largestOverall.width) {

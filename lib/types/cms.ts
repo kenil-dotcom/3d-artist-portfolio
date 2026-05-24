@@ -16,7 +16,6 @@ import type {
   MediaItem,
   MediaRef,
   Project,
-  ProjectId,
   ProjectStatus,
   Slug,
   SocialLink,
