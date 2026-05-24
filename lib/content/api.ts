@@ -254,25 +254,54 @@ const PROJECT_INCLUDE = {
   tags: { select: { tagId: true } },
 } as const;
 
+/**
+ * Wrap a read-only DB call so transient failures (Neon serverless
+ * cold-start, build-time prerender without DB access, dropped network
+ * connection) don't crash the page. Logs the error and returns the
+ * supplied fallback so the UI can render an empty state instead.
+ */
+async function safeRead<T>(label: string, fn: () => Promise<T>, fallback: T): Promise<T> {
+  try {
+    return await fn();
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    // eslint-disable-next-line no-console
+    console.warn(`[content-api] ${label} failed:`, message);
+    return fallback;
+  }
+}
+
 async function loadPublishedProjects(): Promise<ReadonlyArray<Project>> {
-  const rows = await prisma.project.findMany({
-    where: { status: 'published' },
-    include: PROJECT_INCLUDE,
-    orderBy: [{ publishedAt: 'desc' }, { id: 'asc' }],
-  });
-  return rows.map((row) => mapProject(row));
+  return safeRead(
+    'loadPublishedProjects',
+    async () => {
+      const rows = await prisma.project.findMany({
+        where: { status: 'published' },
+        include: PROJECT_INCLUDE,
+        orderBy: [{ publishedAt: 'desc' }, { id: 'asc' }],
+      });
+      return rows.map((row) => mapProject(row));
+    },
+    [],
+  );
 }
 
 async function loadConfiguredFeatured(): Promise<ReadonlyArray<Project>> {
-  const rows = await prisma.project.findMany({
-    where: {
-      status: 'published',
-      featuredOrder: { not: null },
+  return safeRead(
+    'loadConfiguredFeatured',
+    async () => {
+      const rows = await prisma.project.findMany({
+        where: {
+          status: 'published',
+          featuredOrder: { not: null },
+        },
+        include: PROJECT_INCLUDE,
+        orderBy: [{ featuredOrder: 'asc' }, { id: 'asc' }],
+      });
+      return rows.map((row) => mapProject(row));
     },
-    include: PROJECT_INCLUDE,
-    orderBy: [{ featuredOrder: 'asc' }, { id: 'asc' }],
-  });
-  return rows.map((row) => mapProject(row));
+    [],
+  );
 }
 
 // ---------------------------------------------------------------------------
@@ -313,97 +342,114 @@ export async function listGalleryProjects(
  * byte-identical (Requirements 3.10, 8.7).
  */
 export async function getProjectBySlug(slug: string): Promise<Project | null> {
-  const row = await prisma.project.findUnique({
-    where: { slug },
-    include: PROJECT_INCLUDE,
-  });
-  if (row === null) return null;
-  if (row.status !== 'published') return null;
-  return mapProject(row);
+  return safeRead(
+    'getProjectBySlug',
+    async () => {
+      const row = await prisma.project.findUnique({
+        where: { slug },
+        include: PROJECT_INCLUDE,
+      });
+      if (row === null) return null;
+      if (row.status !== 'published') return null;
+      return mapProject(row);
+    },
+    null,
+  );
 }
+
+const EMPTY_BIO: Bio = {
+  artistName: '',
+  tagline: '',
+  biography: '',
+  profileImage: null,
+  skills: [],
+  software: [],
+  socialLinks: [],
+  resume: null,
+  updatedAt: '1970-01-01T00:00:00.000Z' as IsoTimestamp,
+};
 
 /**
  * Load the singleton Bio record. Returns a Bio with empty fields if no
- * record has been seeded yet so the About page always renders.
+ * record has been seeded yet, OR if the DB is unreachable (build-time
+ * prerender, cold start, transient outage) so the layout always renders.
  */
 export async function getBio(): Promise<Bio> {
-  const row = await prisma.bio.findUnique({
-    where: { id: 'singleton' },
-    include: { socialLinks: { orderBy: { ordering: 'asc' } } },
-  });
+  return safeRead(
+    'getBio',
+    async () => {
+      const row = await prisma.bio.findUnique({
+        where: { id: 'singleton' },
+        include: { socialLinks: { orderBy: { ordering: 'asc' } } },
+      });
 
-  if (row === null) {
-    return {
-      artistName: '',
-      tagline: '',
-      biography: '',
-      profileImage: null,
-      skills: [],
-      software: [],
-      socialLinks: [],
-      resume: null,
-      updatedAt: asIsoTimestamp(new Date(0)),
-    };
-  }
+      if (row === null) {
+        return EMPTY_BIO;
+      }
 
-  let profileImage: MediaRef | null = null;
-  if (
-    row.profileImageStorageKey !== null &&
-    row.profileImageContentHash !== null &&
-    row.profileImageMimeType !== null &&
-    row.profileImageByteSize !== null
-  ) {
-    profileImage = {
-      storageKey: row.profileImageStorageKey,
-      contentHash: asContentHash(row.profileImageContentHash),
-      mimeType: narrowMime(row.profileImageMimeType),
-      width: row.profileImageWidth,
-      height: row.profileImageHeight,
-      durationSec: null,
-      byteSize: row.profileImageByteSize,
-    };
-  }
+      let profileImage: MediaRef | null = null;
+      if (
+        row.profileImageStorageKey !== null &&
+        row.profileImageContentHash !== null &&
+        row.profileImageMimeType !== null &&
+        row.profileImageByteSize !== null
+      ) {
+        profileImage = {
+          storageKey: row.profileImageStorageKey,
+          contentHash: asContentHash(row.profileImageContentHash),
+          mimeType: narrowMime(row.profileImageMimeType),
+          width: row.profileImageWidth,
+          height: row.profileImageHeight,
+          durationSec: null,
+          byteSize: row.profileImageByteSize,
+        };
+      }
 
-  let resume: MediaRef | null = null;
-  if (
-    row.resumeStorageKey !== null &&
-    row.resumeContentHash !== null &&
-    row.resumeMimeType !== null &&
-    row.resumeByteSize !== null
-  ) {
-    // Resume PDF is not in the strict MediaMimeType union; we narrow it to
-    // image/jpeg as the safe default since the public bio page renders the
-    // resume as a download link, not an image. The mime is preserved on the
-    // raw storageKey at the CDN edge.
-    resume = {
-      storageKey: row.resumeStorageKey,
-      contentHash: asContentHash(row.resumeContentHash),
-      mimeType: narrowMime(row.resumeMimeType),
-      width: null,
-      height: null,
-      durationSec: null,
-      byteSize: row.resumeByteSize,
-    };
-  }
+      let resume: MediaRef | null = null;
+      if (
+        row.resumeStorageKey !== null &&
+        row.resumeContentHash !== null &&
+        row.resumeMimeType !== null &&
+        row.resumeByteSize !== null
+      ) {
+        // Resume PDF is not in the strict MediaMimeType union; we narrow it
+        // to the safe default since the bio page renders the resume as a
+        // download link, not an image. The mime is preserved on the raw
+        // storageKey at the CDN edge.
+        resume = {
+          storageKey: row.resumeStorageKey,
+          contentHash: asContentHash(row.resumeContentHash),
+          mimeType: narrowMime(row.resumeMimeType),
+          width: null,
+          height: null,
+          durationSec: null,
+          byteSize: row.resumeByteSize,
+        };
+      }
 
-  const socialLinks: ReadonlyArray<SocialLink> = row.socialLinks.map((link) => ({
-    id: brand<SocialLinkId>(link.id),
-    platform: link.platform,
-    url: link.url,
-    ordering: link.ordering,
-  }));
+      const socialLinks: ReadonlyArray<SocialLink> = row.socialLinks.map(
+        (link) => ({
+          id: brand<SocialLinkId>(link.id),
+          platform: link.platform,
+          url: link.url,
+          ordering: link.ordering,
+        }),
+      );
 
-  return {
-    artistName: row.artistName,
-    tagline: row.tagline,
-    biography: row.biography,
-    profileImage,
-    skills: [...row.skills],
-    software: [...row.software],
-    socialLinks,
-    resume,
-    updatedAt: asIsoTimestamp(row.updatedAt),
-  };
+      return {
+        artistName: row.artistName,
+        tagline: row.tagline,
+        biography: row.biography,
+        profileImage,
+        skills: [...row.skills],
+        software: [...row.software],
+        socialLinks,
+        resume,
+        updatedAt: asIsoTimestamp(row.updatedAt),
+      };
+    },
+    EMPTY_BIO,
+  );
 }
 
 /**
@@ -411,14 +457,20 @@ export async function getBio(): Promise<Bio> {
  * the Gallery's category filter chips.
  */
 export async function listCategories(): Promise<ReadonlyArray<Category>> {
-  const rows = await prisma.category.findMany({
-    orderBy: [{ ordering: 'asc' }, { id: 'asc' }],
-  });
-  return rows.map((row) => ({
-    id: asCategoryId(row.id),
-    name: row.name,
-    ordering: row.ordering,
-  }));
+  return safeRead(
+    'listCategories',
+    async () => {
+      const rows = await prisma.category.findMany({
+        orderBy: [{ ordering: 'asc' }, { id: 'asc' }],
+      });
+      return rows.map((row) => ({
+        id: asCategoryId(row.id),
+        name: row.name,
+        ordering: row.ordering,
+      }));
+    },
+    [],
+  );
 }
 
 /**
@@ -426,14 +478,20 @@ export async function listCategories(): Promise<ReadonlyArray<Category>> {
  * Gallery's tag filter chips.
  */
 export async function listTags(): Promise<ReadonlyArray<Tag>> {
-  const rows = await prisma.tag.findMany({
-    orderBy: [{ ordering: 'asc' }, { id: 'asc' }],
-  });
-  return rows.map((row) => ({
-    id: asTagId(row.id),
-    label: row.label,
-    ordering: row.ordering,
-  }));
+  return safeRead(
+    'listTags',
+    async () => {
+      const rows = await prisma.tag.findMany({
+        orderBy: [{ ordering: 'asc' }, { id: 'asc' }],
+      });
+      return rows.map((row) => ({
+        id: asTagId(row.id),
+        label: row.label,
+        ordering: row.ordering,
+      }));
+    },
+    [],
+  );
 }
 
 /**

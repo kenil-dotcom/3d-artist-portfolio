@@ -10,6 +10,12 @@
 import Link from 'next/link';
 import type { ReactElement } from 'react';
 
+// Skip prerender at build time — the not-found page renders the root
+// layout, which fetches Bio data. During build (no DB access) this would
+// crash the static page generation. Rendering on demand is the right call
+// for a 404 anyway since it's not on a hot path.
+export const dynamic = 'force-dynamic';
+
 export default function NotFound(): ReactElement {
   return (
     <div className="mx-auto flex min-h-[60vh] max-w-2xl flex-col items-center justify-center px-6 py-32 text-center">
