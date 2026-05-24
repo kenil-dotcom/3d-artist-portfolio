@@ -73,6 +73,7 @@ function makeMediaItem(overrides: Partial<MediaItem> = {}): MediaItem {
     ordering: 0,
     captionsRef: null,
     transcript: null,
+    embedUrl: null,
     ...overrides,
   };
 }

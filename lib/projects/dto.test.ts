@@ -101,6 +101,7 @@ function makeMediaItem(idSuffix: string, ordering: number): MediaItem {
     ordering,
     captionsRef: null,
     transcript: null,
+    embedUrl: null,
   };
 }
 

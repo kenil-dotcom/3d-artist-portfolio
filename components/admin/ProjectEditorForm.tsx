@@ -39,12 +39,6 @@ interface TagOption {
   readonly label: string;
 }
 
-interface MediaSummary {
-  readonly id: string;
-  readonly kind: 'image' | 'video' | 'model3d';
-  readonly storageKey: string;
-}
-
 interface ProjectInitial {
   readonly id: string;
   readonly title: string;
@@ -64,7 +58,6 @@ interface ProjectEditorFormProps {
   readonly initial: ProjectInitial;
   readonly categories: ReadonlyArray<CategoryOption>;
   readonly tags: ReadonlyArray<TagOption>;
-  readonly mediaItems: ReadonlyArray<MediaSummary>;
   readonly showSavedBanner: boolean;
 }
 
@@ -73,7 +66,6 @@ export function ProjectEditorForm({
   initial,
   categories,
   tags,
-  mediaItems,
   showSavedBanner,
 }: ProjectEditorFormProps): ReactElement {
   const boundAction = useMemo(
@@ -167,11 +159,9 @@ export function ProjectEditorForm({
             initial={initial.featuredOrder}
             error={state.errors['featuredOrder']}
           />
-          <CoverField
-            initial={initial.coverMediaId}
-            mediaItems={mediaItems.filter((m) => m.kind === 'image')}
-            error={state.errors['coverMediaId']}
-          />
+          {/* Cover selection is owned by the media manager below — the
+              form never writes coverMediaId so it never clobbers a fresh
+              "Set as cover" click made between renders. */}
         </div>
       </section>
 
@@ -583,43 +573,6 @@ function FeaturedOrderField({
       />
       <p className="mt-1 text-xs text-muted">0–11. Lower numbers come first.</p>
       <FieldError id="featuredOrder-error" message={error} />
-    </div>
-  );
-}
-
-function CoverField({
-  initial,
-  mediaItems,
-  error,
-}: {
-  readonly initial: string | null;
-  readonly mediaItems: ReadonlyArray<MediaSummary>;
-  readonly error: string | undefined;
-}): ReactElement {
-  return (
-    <div>
-      <label htmlFor="coverMediaId" className="label-field">
-        Cover image
-      </label>
-      <select
-        id="coverMediaId"
-        name="coverMediaId"
-        defaultValue={initial ?? ''}
-        aria-invalid={error !== undefined}
-        aria-describedby={error !== undefined ? 'coverMediaId-error' : undefined}
-        className="input-field"
-      >
-        <option value="">— None —</option>
-        {mediaItems.map((m) => (
-          <option key={m.id} value={m.id}>
-            {m.storageKey.split('/').pop() ?? m.id}
-          </option>
-        ))}
-      </select>
-      <p className="mt-1 text-xs text-muted">
-        Required to publish. Upload media first if the list is empty.
-      </p>
-      <FieldError id="coverMediaId-error" message={error} />
     </div>
   );
 }

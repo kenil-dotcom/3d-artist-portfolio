@@ -84,6 +84,7 @@ export default async function ProjectEditPage({
     ordering: m.ordering,
     width: m.width,
     height: m.height,
+    embedUrl: m.embedUrl,
   }));
 
   return (
@@ -115,11 +116,6 @@ export default async function ProjectEditPage({
         initial={initial}
         categories={categories.map((c) => ({ id: c.id, name: c.name }))}
         tags={tags.map((t) => ({ id: t.id, label: t.label }))}
-        mediaItems={mediaItems.map((m) => ({
-          id: m.id,
-          kind: m.kind,
-          storageKey: m.storageKey,
-        }))}
         showSavedBanner={justSaved}
       />
 
@@ -138,7 +134,17 @@ export default async function ProjectEditPage({
           image before publishing.
         </p>
         <div className="mt-6">
-          <ProjectMediaManager projectId={project.id} mediaItems={mediaItems} />
+          <ProjectMediaManager
+            projectId={project.id}
+            projectSlug={project.slug}
+            projectTitle={project.title}
+            status={project.status}
+            hasTitle={project.title.trim().length > 0}
+            hasSlug={project.slug.trim().length > 0}
+            hasCategory={project.categoryId.length > 0}
+            initialMedia={mediaItems}
+            initialCoverMediaId={project.coverMediaId}
+          />
         </div>
       </section>
 

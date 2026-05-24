@@ -248,8 +248,8 @@ function GalleryTile({ project, category, priority }: GalleryTileProps): ReactEl
   const cover = findCover(project);
 
   return (
-    <Link href={`/projects/${slug}`} className="group tile-card">
-      <div className="aspect-[4/3] w-full overflow-hidden">
+    <Link href={`/projects/${slug}`} className="group tile-card relative">
+      <div className="relative aspect-[4/3] w-full overflow-hidden">
         {cover === null ? (
           <div
             aria-hidden="true"
@@ -264,6 +264,21 @@ function GalleryTile({ project, category, priority }: GalleryTileProps): ReactEl
             priority={priority}
           />
         )}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-0 bg-gradient-to-t from-black/70 via-black/30 to-transparent opacity-0 transition-opacity duration-500 ease-soft group-hover:opacity-100 group-focus-visible:opacity-100"
+        />
+        <div
+          aria-hidden="true"
+          className="pointer-events-none absolute inset-x-4 bottom-4 translate-y-2 opacity-0 transition-all duration-500 ease-pop group-hover:translate-y-0 group-hover:opacity-100 group-focus-visible:translate-y-0 group-focus-visible:opacity-100"
+        >
+          <p className="font-[family-name:var(--font-display)] text-xl font-semibold leading-tight tracking-[-0.02em] text-white">
+            {project.title}
+          </p>
+          <p className="mt-1 text-[10px] uppercase tracking-[0.2em] text-white/80">
+            {category?.name ?? 'Uncategorised'}
+          </p>
+        </div>
       </div>
       <div className="px-5 py-5">
         <p className="text-base font-normal text-foreground">{project.title}</p>

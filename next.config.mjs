@@ -5,6 +5,13 @@ const nextConfig = {
   // Allow `sharp`, `argon2`, and AWS SDK to run as native server-only modules.
   experimental: {
     serverComponentsExternalPackages: ['sharp', 'argon2', '@aws-sdk/client-s3'],
+    // Lift the server action body cap from the 1 MB default so the
+    // admin CMS can accept large image / video uploads. R2 + the
+    // 5 GB validator ceiling are the real backstops; this just
+    // tells Next.js to accept the request body in the first place.
+    serverActions: {
+      bodySizeLimit: '500mb',
+    },
   },
   images: {
     // The portfolio's media pipeline emits its own AVIF/WebP variants
@@ -14,6 +21,13 @@ const nextConfig = {
     // selection deterministic and testable.
     unoptimized: true,
     formats: ['image/avif', 'image/webp'],
+    // Allow the public site to render images from the R2 public bucket
+    // and from any CDN configured via CDN_BASE_URL.
+    remotePatterns: [
+      { protocol: 'https', hostname: '*.r2.dev' },
+      { protocol: 'https', hostname: '*.cloudflarestorage.com' },
+      { protocol: 'https', hostname: 'picsum.photos' },
+    ],
   },
   // Security headers are also asserted in `middleware.ts` (Requirement 12.2).
   async headers() {

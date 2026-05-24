@@ -422,7 +422,7 @@ Tasks marked with `*` are optional and can be skipped for a faster MVP path; the
     - **Property 26: Sitemap rebuild workflow**
     - **Validates: Requirements 11.4, 11.5, 11.6, 11.7**
 
-  - [ ] 16.6 Implement robots.txt route
+  - [x] 16.6 Implement robots.txt route
     - In `app/robots.txt/route.ts`, serve a static robots policy that allows all sitemap URLs and disallows `/admin/*` and `/api/*`
     - In `lib/seo/robots.ts`, implement `isAllowedByRobots(url)` consumed by the route handler
     - _Requirements: 11.5_

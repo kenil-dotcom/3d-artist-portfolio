@@ -157,6 +157,14 @@ export interface MediaItem {
   readonly captionsRef: MediaRef | null;
   /** Optional plain-text transcript for video accessibility. */
   readonly transcript: string | null;
+  /**
+   * Optional embed URL for externally hosted media (YouTube/Vimeo). When
+   * set the public site renders an iframe instead of streaming
+   * `ref.storageKey` directly. Mutually exclusive with file uploads at
+   * the application layer; the column is nullable so file-upload media
+   * items leave it as `null`.
+   */
+  readonly embedUrl: string | null;
 }
 
 // ---------------------------------------------------------------------------

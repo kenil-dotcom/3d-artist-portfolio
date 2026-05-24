@@ -100,13 +100,19 @@ describe('validateAttachments', () => {
   });
 
   it('rejects only the file that would overflow combined size, keeping later fitting files', () => {
-    // 30 MB + 25 MB would overflow; the 25 MB file is rejected with
-    // total_too_large, but the 5 MB file that follows still fits (35 MB total)
-    // and should be accepted.
+    // With the spec defaults (5 files, 10 MB each, 50 MB combined) the count
+    // cap always trips before the combined-size cap, so we exercise the
+    // total_too_large branch with custom limits that allow larger per-file
+    // sizes. 30 MB + 25 MB would overflow the 50 MB cap; the 25 MB file is
+    // rejected with total_too_large, but the 5 MB file that follows still
+    // fits (35 MB total) and is accepted.
     const big = f('big.jpg', 30 * MB);
     const overflow = f('overflow.jpg', 25 * MB);
     const small = f('small.jpg', 5 * MB);
-    const { accepted, rejected } = validateAttachments([big, overflow, small]);
+    const { accepted, rejected } = validateAttachments(
+      [big, overflow, small],
+      { maxFileBytes: 30 * MB, maxTotalBytes: 50 * MB, maxFiles: 10 },
+    );
 
     expect(accepted).toEqual([big, small]);
     expect(rejected).toHaveLength(1);

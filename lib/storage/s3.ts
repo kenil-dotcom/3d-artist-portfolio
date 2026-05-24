@@ -58,6 +58,12 @@ export interface S3StorageConfig {
   readonly secretAccessKey?: string | null;
   /** KMS key id; when set, objects are stored with SSE-KMS instead of SSE-S3. */
   readonly kmsKeyId?: string | null;
+  /**
+   * Custom S3-compatible endpoint URL. Required for Cloudflare R2 (looks
+   * like `https://<account>.r2.cloudflarestorage.com`); leave undefined for
+   * AWS S3 to use the default region-derived endpoint.
+   */
+  readonly endpoint?: string | null;
   /** CDN base URL used by `getObjectUrl`; defaults to `CDN_BASE_URL`. */
   readonly cdnBaseUrl?: string;
   /**
@@ -121,6 +127,8 @@ export function s3Storage(config: S3StorageConfig = {}): ObjectStorage {
         ? config.secretAccessKey
         : (env.s3SecretAccessKey ?? null);
     const kmsKeyId = config.kmsKeyId !== undefined ? config.kmsKeyId : (env.s3KmsKeyId ?? null);
+    const endpoint =
+      config.endpoint !== undefined ? config.endpoint : (env.s3Endpoint ?? null);
 
     if (!region) {
       throw new Error("s3Storage: region is required (set S3_REGION or pass config.region)");
@@ -136,7 +144,7 @@ export function s3Storage(config: S3StorageConfig = {}): ObjectStorage {
 
     const client =
       config.client ??
-      new S3Client(buildClientConfig(region, accessKeyId, secretAccessKey));
+      new S3Client(buildClientConfig(region, accessKeyId, secretAccessKey, endpoint));
 
     resolved = { client, bucket, cdnBaseUrl, kmsKeyId };
     return resolved;
@@ -197,15 +205,25 @@ export function s3Storage(config: S3StorageConfig = {}): ObjectStorage {
  * Build the SDK client configuration. Explicit credentials are forwarded
  * when present; otherwise the SDK falls back to its default credential
  * provider chain (env vars, shared config files, IAM roles, etc.).
+ *
+ * `endpoint` is forwarded for S3-compatible services (Cloudflare R2,
+ * MinIO) which expose a custom URL distinct from the AWS-region-derived
+ * default. R2 also requires `forcePathStyle: true` because virtual-hosted
+ * style URLs are not supported on its `r2.cloudflarestorage.com` host.
  */
 function buildClientConfig(
   region: string,
   accessKeyId: string | null,
   secretAccessKey: string | null,
+  endpoint: string | null,
 ): S3ClientConfig {
   const cfg: S3ClientConfig = { region };
   if (accessKeyId && secretAccessKey) {
     cfg.credentials = { accessKeyId, secretAccessKey };
+  }
+  if (endpoint && endpoint.length > 0) {
+    cfg.endpoint = endpoint;
+    cfg.forcePathStyle = true;
   }
   return cfg;
 }

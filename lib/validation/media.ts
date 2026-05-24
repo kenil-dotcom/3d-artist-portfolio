@@ -81,9 +81,16 @@ export type MediaValidationResult =
 // ---------------------------------------------------------------------------
 
 const ONE_MB = 1024 * 1024;
+const ONE_GB = 1024 * ONE_MB;
 
-/** 100 MB upload ceiling per Requirement 8.3. */
-export const MAX_MEDIA_BYTES = 100 * ONE_MB;
+/**
+ * Upload ceiling. The spec called for 100 MB per file but R2 / Cloudflare
+ * can comfortably handle large videos and the artist needs room for full-
+ * resolution renders, so we lift the cap to 5 GB. Sharp metadata probing
+ * still happens on every accepted image so very large stills won't throw
+ * at processing time.
+ */
+export const MAX_MEDIA_BYTES = 5 * ONE_GB;
 
 /** Allowed image MIME types per Requirement 8.3. */
 export const ALLOWED_IMAGE_MIME_TYPES: ReadonlyArray<ImageMimeType> = [

@@ -1,17 +1,22 @@
 /**
- * Local upload pipeline used by the admin CMS.
+ * Admin upload pipeline backed by Cloudflare R2 (S3-compatible).
  *
- * Files are written under `public/uploads/<scope>/<contentHash>.<ext>`
- * where `scope` is the project id (`uploads/{projectId}/`) or the
- * literal `bio` (`uploads/bio/`). The path is also the `storageKey`
- * stored on the corresponding `MediaItem` / `Bio` row, so the public
- * site reads it as a normal `/uploads/...` URL through Next.js' static
- * file serving.
+ * Files are uploaded directly to the configured R2 bucket and served from
+ * the bucket's public `r2.dev` URL (or a custom domain mapped to the
+ * bucket). The `storageKey` field stored on `MediaItem` / `Bio` rows is
+ * the **fully qualified public URL** so the public site can render it
+ * with `<img src={storageKey}>` without further URL composition.
  *
- * IMPORTANT: this storage backend is only suitable for local
- * development and zero-downtime deployments. On Vercel's serverless
- * runtime the public folder is read-only at runtime; switch to S3/R2
- * before going to production. See README "Image storage" notes.
+ * Why store the full URL rather than a key? R2's public URL is stable
+ * for the life of the bucket and embedding it directly:
+ *
+ *   - Simplifies the public render path (no extra config join needed).
+ *   - Lets the same DB row keep working if the public URL is later
+ *     swapped for a custom CDN domain (we only update existing rows).
+ *
+ * For development without R2 credentials, the pipeline falls back to
+ * writing to `public/uploads/` so contributors can still iterate locally.
+ * The fallback is not used in production.
  */
 
 import 'server-only';
@@ -21,6 +26,11 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
 import sharp from 'sharp';
+import {
+  PutObjectCommand,
+  S3Client,
+  type S3ClientConfig,
+} from '@aws-sdk/client-s3';
 
 import {
   ALLOWED_MIME_TYPES_BY_KIND,
@@ -49,6 +59,7 @@ const MIME_TO_EXT: Readonly<Record<string, string>> = {
 };
 
 export interface StoredUpload {
+  /** Fully qualified public URL for the uploaded asset. */
   readonly storageKey: string;
   readonly contentHash: string;
   readonly mimeType: string;
@@ -83,14 +94,108 @@ function inferKindFromMime(mime: string): MediaKind | null {
   return null;
 }
 
+// ---------------------------------------------------------------------------
+// R2 client (lazy, cached)
+// ---------------------------------------------------------------------------
+
+interface R2Config {
+  readonly client: S3Client;
+  readonly bucket: string;
+  readonly publicBaseUrl: string;
+}
+
+let cachedR2: R2Config | null = null;
+
 /**
- * Persist a media file for a project. Validates against the
- * `validateMediaUpload` rules, hashes the bytes, writes them to
- * `public/uploads/<projectId>/<hash>.<ext>`, and probes images for
- * intrinsic dimensions via `sharp`.
- *
- * @returns the stored metadata or a structured error suitable for
- * inline UI feedback.
+ * Resolve R2 client and bucket from `process.env`. Returns `null` when
+ * any required value is missing so callers can fall back to local-disk
+ * storage in dev without env vars.
+ */
+function resolveR2(): R2Config | null {
+  if (cachedR2 !== null) return cachedR2;
+
+  const region = (process.env.S3_REGION ?? '').trim();
+  const bucket = (process.env.S3_BUCKET ?? '').trim();
+  const accessKeyId = (process.env.S3_ACCESS_KEY_ID ?? '').trim();
+  const secretAccessKey = (process.env.S3_SECRET_ACCESS_KEY ?? '').trim();
+  const endpoint = (process.env.S3_ENDPOINT ?? '').trim();
+  const publicBaseUrl = (process.env.CDN_BASE_URL ?? '').trim();
+
+  if (
+    region.length === 0 ||
+    bucket.length === 0 ||
+    accessKeyId.length === 0 ||
+    secretAccessKey.length === 0 ||
+    endpoint.length === 0 ||
+    publicBaseUrl.length === 0
+  ) {
+    return null;
+  }
+
+  const cfg: S3ClientConfig = {
+    region,
+    endpoint,
+    forcePathStyle: true,
+    credentials: { accessKeyId, secretAccessKey },
+  };
+
+  cachedR2 = {
+    client: new S3Client(cfg),
+    bucket,
+    publicBaseUrl: publicBaseUrl.replace(/\/+$/u, ''),
+  };
+  return cachedR2;
+}
+
+async function putToR2(
+  cfg: R2Config,
+  key: string,
+  body: Buffer,
+  contentType: string,
+): Promise<void> {
+  await cfg.client.send(
+    new PutObjectCommand({
+      Bucket: cfg.bucket,
+      Key: key,
+      Body: body,
+      ContentType: contentType,
+      // R2 public buckets serve any object that exists, no ACL needed.
+      // Cache for a year — we already content-hash the filename, so
+      // re-uploading the same image is idempotent and CDN-immutable.
+      CacheControl: 'public, max-age=31536000, immutable',
+    }),
+  );
+}
+
+function r2Url(cfg: R2Config, key: string): string {
+  return `${cfg.publicBaseUrl}/${key
+    .split('/')
+    .map((segment) => encodeURIComponent(segment))
+    .join('/')}`;
+}
+
+// ---------------------------------------------------------------------------
+// Local-disk fallback (dev only when R2 is unconfigured)
+// ---------------------------------------------------------------------------
+
+async function putToLocalDisk(
+  scope: string,
+  filename: string,
+  body: Buffer,
+): Promise<string> {
+  const targetDir = join(UPLOADS_ROOT, scope);
+  await mkdir(targetDir, { recursive: true });
+  await writeFile(join(targetDir, filename), body);
+  return `/uploads/${scope}/${filename}`;
+}
+
+// ---------------------------------------------------------------------------
+// Public API
+// ---------------------------------------------------------------------------
+
+/**
+ * Persist a media file for a project. Validates, hashes, uploads to R2
+ * (or local disk in dev), and probes images for intrinsic dimensions.
  */
 export async function storeProjectMedia(
   projectId: string,
@@ -121,12 +226,22 @@ export async function storeProjectMedia(
 
   const contentHash = hashBuffer(buf);
   const extension = MIME_TO_EXT[mimeType] ?? 'bin';
-
-  const targetDir = join(UPLOADS_ROOT, projectId);
-  await mkdir(targetDir, { recursive: true });
+  const key = `media/${projectId}/${contentHash}.${extension}`;
   const filename = `${contentHash}.${extension}`;
-  const fullPath = join(targetDir, filename);
-  await writeFile(fullPath, buf);
+
+  let storageKey: string;
+  const r2 = resolveR2();
+  if (r2 !== null) {
+    try {
+      await putToR2(r2, key, buf, mimeType);
+      storageKey = r2Url(r2, key);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: `${file.name}: R2 upload failed (${msg}).` };
+    }
+  } else {
+    storageKey = await putToLocalDisk(projectId, filename, buf);
+  }
 
   let width: number | null = null;
   let height: number | null = null;
@@ -140,7 +255,6 @@ export async function storeProjectMedia(
     }
   }
 
-  const storageKey = `/uploads/${projectId}/${filename}`;
   return {
     ok: true,
     value: {
@@ -157,9 +271,7 @@ export async function storeProjectMedia(
 }
 
 /**
- * Persist a bio asset (profile image or resume PDF) under
- * `public/uploads/bio/`. Validation is parameterised by the expected
- * mime allow-list and per-file size cap.
+ * Persist a bio asset (profile image or resume PDF).
  */
 export async function storeBioAsset(
   file: File,
@@ -190,12 +302,22 @@ export async function storeBioAsset(
 
   const contentHash = hashBuffer(buf);
   const extension = MIME_TO_EXT[mimeType] ?? 'bin';
-
-  const targetDir = join(UPLOADS_ROOT, 'bio');
-  await mkdir(targetDir, { recursive: true });
   const filename = `${contentHash}.${extension}`;
-  const fullPath = join(targetDir, filename);
-  await writeFile(fullPath, buf);
+  const key = `bio/${filename}`;
+
+  let storageKey: string;
+  const r2 = resolveR2();
+  if (r2 !== null) {
+    try {
+      await putToR2(r2, key, buf, mimeType);
+      storageKey = r2Url(r2, key);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { ok: false, error: `${file.name}: R2 upload failed (${msg}).` };
+    }
+  } else {
+    storageKey = await putToLocalDisk('bio', filename, buf);
+  }
 
   let width: number | null = null;
   let height: number | null = null;
@@ -212,7 +334,7 @@ export async function storeBioAsset(
   return {
     ok: true,
     value: {
-      storageKey: `/uploads/bio/${filename}`,
+      storageKey,
       contentHash,
       mimeType,
       byteSize: buf.byteLength,

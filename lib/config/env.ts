@@ -20,6 +20,10 @@
  * SSE-KMS. `s3AccessKeyId` and `s3SecretAccessKey` are also nullable because
  * the AWS SDK can resolve credentials from the ambient environment, IAM
  * roles, or instance metadata when they are not supplied explicitly.
+ *
+ * `s3Endpoint` is null on AWS S3 (the SDK resolves the endpoint from
+ * `s3Region`) and set on Cloudflare R2 / MinIO / other S3-compatible
+ * services that expose a custom endpoint URL.
  */
 export interface StorageEnv {
   readonly s3Region: string;
@@ -27,6 +31,7 @@ export interface StorageEnv {
   readonly s3AccessKeyId: string | null;
   readonly s3SecretAccessKey: string | null;
   readonly s3KmsKeyId: string | null;
+  readonly s3Endpoint: string | null;
   readonly cdnBaseUrl: string;
 }
 
@@ -89,6 +94,7 @@ export function getStorageEnv(): StorageEnv {
     s3AccessKeyId: readOptional("S3_ACCESS_KEY_ID"),
     s3SecretAccessKey: readOptional("S3_SECRET_ACCESS_KEY"),
     s3KmsKeyId: readOptional("S3_KMS_KEY_ID"),
+    s3Endpoint: readOptional("S3_ENDPOINT"),
     cdnBaseUrl,
   };
 }

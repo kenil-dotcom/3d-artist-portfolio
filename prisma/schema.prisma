@@ -175,6 +175,13 @@ model MediaItem {
   captionsMimeType    String? @db.VarChar(60)
   captionsByteSize    Int?
 
+  /// Optional embed URL for externally hosted media (YouTube, Vimeo, ...).
+  /// When set, the public site renders an iframe instead of streaming
+  /// `storageKey` directly. Mutually exclusive with file uploads at the
+  /// app layer; both columns coexist so future redesigns can swap one for
+  /// the other without a migration.
+  embedUrl String? @db.VarChar(2048)
+
   transcript String? @db.Text
 
   /// Reverse relation for Project.coverMedia. A media item may be the cover

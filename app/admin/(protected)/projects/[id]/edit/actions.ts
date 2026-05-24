@@ -103,6 +103,7 @@ async function reloadProjectAsDomain(id: string): Promise<Project | null> {
     ordering: m.ordering,
     captionsRef: null,
     transcript: m.transcript,
+    embedUrl: m.embedUrl,
   }));
 
   return {
@@ -158,8 +159,6 @@ export async function saveProject(
   const statusRaw = (formData.get('status') ?? 'draft').toString();
   const status: ProjectStatus =
     statusRaw === 'published' ? 'published' : 'draft';
-  const coverMediaIdRaw = (formData.get('coverMediaId') ?? '').toString();
-  const coverMediaId = coverMediaIdRaw.length > 0 ? coverMediaIdRaw : null;
   const featuredOrder = parseFeaturedOrder(
     (formData.get('featuredOrder') ?? '').toString(),
   );
@@ -241,7 +240,6 @@ export async function saveProject(
     creationDate: new Date(creationDate),
     status,
     featuredOrder,
-    coverMediaId,
   };
 
   if (projectId === null) {
@@ -300,8 +298,6 @@ export async function saveProject(
       const next: Project = {
         ...ready,
         title: titleRaw,
-        coverMediaId:
-          coverMediaId === null ? null : brand<MediaItemId>(coverMediaId),
       };
       const check = validatePublishable(next);
       if (!check.ok) {
@@ -506,54 +502,73 @@ export async function deleteMediaItem(formData: FormData): Promise<void> {
   revalidateProjectPaths(item.project.slug);
 }
 
-export async function moveMediaItem(formData: FormData): Promise<void> {
+/**
+ * Set the cover media for a project. The selected media item must belong
+ * to the project and be an image. Used by the per-item "Set as cover"
+ * button on the editor.
+ */
+export async function setCoverMedia(formData: FormData): Promise<void> {
   'use server';
   await requireAdmin();
 
-  const id = (formData.get('id') ?? '').toString();
-  const direction = (formData.get('direction') ?? '').toString();
-  if (id.length === 0 || (direction !== 'up' && direction !== 'down')) return;
+  const projectId = (formData.get('projectId') ?? '').toString();
+  const mediaId = (formData.get('mediaId') ?? '').toString();
+  if (projectId.length === 0 || mediaId.length === 0) return;
 
   const item = await prisma.mediaItem.findUnique({
-    where: { id },
+    where: { id: mediaId },
     select: {
-      id: true,
-      ordering: true,
       projectId: true,
+      kind: true,
       project: { select: { slug: true } },
     },
   });
-  if (item === null) return;
+  if (item === null || item.projectId !== projectId) return;
+  if (item.kind !== 'image') return;
 
-  const neighbour = await prisma.mediaItem.findFirst({
-    where: {
-      projectId: item.projectId,
-      ordering:
-        direction === 'up'
-          ? { lt: item.ordering }
-          : { gt: item.ordering },
-    },
-    orderBy: { ordering: direction === 'up' ? 'desc' : 'asc' },
-    select: { id: true, ordering: true },
-  });
-  if (neighbour === null) return;
-
-  // Swap ordering values. Use a temporary high value to avoid the
-  // unlikely-but-possible collision that two-step swaps suffer from.
-  const tmp = -1;
-  await prisma.$transaction(async (tx) => {
-    await tx.mediaItem.update({ where: { id: item.id }, data: { ordering: tmp } });
-    await tx.mediaItem.update({
-      where: { id: neighbour.id },
-      data: { ordering: item.ordering },
-    });
-    await tx.mediaItem.update({
-      where: { id: item.id },
-      data: { ordering: neighbour.ordering },
-    });
+  await prisma.project.update({
+    where: { id: projectId },
+    data: { coverMediaId: mediaId },
   });
 
   revalidateProjectPaths(item.project.slug);
+}
+
+/**
+ * One-click publish from the editor's publish-readiness callout. Runs the
+ * same `validatePublishable` gate as the regular save action and stamps
+ * `publishedAt` if not already set.
+ */
+export async function publishProject(formData: FormData): Promise<void> {
+  'use server';
+  await requireAdmin();
+
+  const projectId = (formData.get('projectId') ?? '').toString();
+  if (projectId.length === 0) return;
+
+  const project = await reloadProjectAsDomain(projectId);
+  if (project === null) return;
+
+  const check = validatePublishable(project);
+  if (!check.ok) {
+    return;
+  }
+
+  const current = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { slug: true, publishedAt: true },
+  });
+  if (current === null) return;
+
+  await prisma.project.update({
+    where: { id: projectId },
+    data: {
+      status: 'published',
+      publishedAt: current.publishedAt ?? new Date(),
+    },
+  });
+
+  revalidateProjectPaths(current.slug);
 }
 
 // ---------------------------------------------------------------------------

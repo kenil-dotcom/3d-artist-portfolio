@@ -156,6 +156,7 @@ interface MediaItemRow {
   readonly captionsMimeType: string | null;
   readonly captionsByteSize: number | null;
   readonly transcript: string | null;
+  readonly embedUrl: string | null;
 }
 
 function mapMediaItem(row: MediaItemRow): MediaItem {
@@ -197,6 +198,7 @@ function mapMediaItem(row: MediaItemRow): MediaItem {
     ordering: row.ordering,
     captionsRef,
     transcript: row.transcript,
+    embedUrl: row.embedUrl,
   };
 }
 

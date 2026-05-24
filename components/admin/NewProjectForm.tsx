@@ -29,6 +29,11 @@ export function NewProjectForm({
     INITIAL_CREATE_STATE,
   );
 
+  // Defensive default: if a future server action returns an envelope
+  // without the `errors` field, fall back to an empty map so the form
+  // does not crash dereferencing `state.errors['title']`.
+  const errors = state.errors ?? {};
+
   const [title, setTitle] = useState('');
   const [slug, setSlug] = useState('');
   const [autoSlug, setAutoSlug] = useState(true);
@@ -67,18 +72,18 @@ export function NewProjectForm({
           maxLength={120}
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          aria-invalid={state.errors['title'] !== undefined}
+          aria-invalid={errors['title'] !== undefined}
           aria-describedby={
-            state.errors['title'] !== undefined ? 'title-error' : undefined
+            errors['title'] !== undefined ? 'title-error' : undefined
           }
           className="input-field"
         />
-        {state.errors['title'] !== undefined ? (
+        {errors['title'] !== undefined ? (
           <p
             id="title-error"
             className="mt-2 text-xs font-medium text-[hsl(var(--color-pop-amber))]"
           >
-            {state.errors['title']}
+            {errors['title']}
           </p>
         ) : null}
       </div>
@@ -97,18 +102,18 @@ export function NewProjectForm({
             setAutoSlug(false);
             setSlug(e.target.value);
           }}
-          aria-invalid={state.errors['slug'] !== undefined}
+          aria-invalid={errors['slug'] !== undefined}
           aria-describedby={
-            state.errors['slug'] !== undefined ? 'slug-error' : undefined
+            errors['slug'] !== undefined ? 'slug-error' : undefined
           }
           className="input-field"
         />
-        {state.errors['slug'] !== undefined ? (
+        {errors['slug'] !== undefined ? (
           <p
             id="slug-error"
             className="mt-2 text-xs font-medium text-[hsl(var(--color-pop-amber))]"
           >
-            {state.errors['slug']}
+            {errors['slug']}
           </p>
         ) : null}
       </div>
@@ -136,9 +141,9 @@ export function NewProjectForm({
             name="categoryId"
             required
             defaultValue=""
-            aria-invalid={state.errors['categoryId'] !== undefined}
+            aria-invalid={errors['categoryId'] !== undefined}
             aria-describedby={
-              state.errors['categoryId'] !== undefined ? 'category-error' : undefined
+              errors['categoryId'] !== undefined ? 'category-error' : undefined
             }
             className="input-field"
           >
@@ -149,12 +154,12 @@ export function NewProjectForm({
               </option>
             ))}
           </select>
-          {state.errors['categoryId'] !== undefined ? (
+          {errors['categoryId'] !== undefined ? (
             <p
               id="category-error"
               className="mt-2 text-xs font-medium text-[hsl(var(--color-pop-amber))]"
             >
-              {state.errors['categoryId']}
+              {errors['categoryId']}
             </p>
           ) : null}
         </div>
@@ -169,20 +174,20 @@ export function NewProjectForm({
             required
             max={today}
             defaultValue={today}
-            aria-invalid={state.errors['creationDate'] !== undefined}
+            aria-invalid={errors['creationDate'] !== undefined}
             aria-describedby={
-              state.errors['creationDate'] !== undefined
+              errors['creationDate'] !== undefined
                 ? 'creation-error'
                 : undefined
             }
             className="input-field"
           />
-          {state.errors['creationDate'] !== undefined ? (
+          {errors['creationDate'] !== undefined ? (
             <p
               id="creation-error"
               className="mt-2 text-xs font-medium text-[hsl(var(--color-pop-amber))]"
             >
-              {state.errors['creationDate']}
+              {errors['creationDate']}
             </p>
           ) : null}
         </div>
