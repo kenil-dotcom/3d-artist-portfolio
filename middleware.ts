@@ -24,11 +24,18 @@ const LOGOUT_PATH = '/admin/logout';
 export function middleware(request: NextRequest): NextResponse {
   const { pathname } = request.nextUrl;
 
+  // Forward the resolved pathname to server components via a request
+  // header so layouts can branch on the URL without re-parsing it.
+  // Setting it on the *response* (the previous bug) only mutates the
+  // browser-visible response, not what server-side `headers()` reads,
+  // so the root layout could never detect admin paths and always tried
+  // to render public chrome on /admin/* — breaking the login page.
+  const requestHeaders = new Headers(request.headers);
+  requestHeaders.set('x-pathname', pathname);
+
   // Allow login page and logout endpoint without a session.
   if (pathname === LOGIN_PATH || pathname === LOGOUT_PATH) {
-    const response = NextResponse.next();
-    response.headers.set('x-pathname', pathname);
-    return response;
+    return NextResponse.next({ request: { headers: requestHeaders } });
   }
 
   const cookie = request.cookies.get(SESSION_COOKIE_NAME);
@@ -39,9 +46,7 @@ export function middleware(request: NextRequest): NextResponse {
     return NextResponse.redirect(loginUrl);
   }
 
-  const response = NextResponse.next();
-  response.headers.set('x-pathname', pathname);
-  return response;
+  return NextResponse.next({ request: { headers: requestHeaders } });
 }
 
 export const config = {

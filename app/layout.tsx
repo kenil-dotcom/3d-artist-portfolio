@@ -59,7 +59,8 @@ export default async function RootLayout({
   if (isAdmin) {
     // Admin section renders its own chrome (and its own gate). The root
     // layout still mounts globals.css and the document shell, but skips
-    // the public site header/footer/cursor.
+    // the public site header/footer/cursor. Avoiding `getBio()` here also
+    // means a degraded database does not block the login page.
     return (
       <html lang="en" className={displaySans.variable}>
         <body className="flex min-h-screen flex-col bg-background text-foreground">
@@ -69,7 +70,19 @@ export default async function RootLayout({
     );
   }
 
-  const bio = await getBio();
+  // `getBio()` is wrapped in `safeRead` and never throws, but we still
+  // guard with try/catch so any future regression cannot bring the whole
+  // root layout down.
+  let artistName = '3D Artist Portfolio';
+  let socialLinks: Awaited<ReturnType<typeof getBio>>['socialLinks'] = [];
+  try {
+    const bio = await getBio();
+    artistName = bio.artistName;
+    socialLinks = bio.socialLinks;
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn('[layout] getBio failed, using fallback chrome:', err);
+  }
 
   return (
     <html lang="en" className={displaySans.variable}>
@@ -80,11 +93,11 @@ export default async function RootLayout({
         >
           Skip to main content
         </a>
-        <SiteHeader artistName={bio.artistName} />
+        <SiteHeader artistName={artistName} />
         <main id="main-content" className="flex-1">
           {children}
         </main>
-        <SiteFooter artistName={bio.artistName} socialLinks={bio.socialLinks} />
+        <SiteFooter artistName={artistName} socialLinks={socialLinks} />
         <CustomCursor />
       </body>
     </html>
