@@ -1,4 +1,5 @@
 import type { Metadata } from 'next';
+import { headers } from 'next/headers';
 import { Space_Grotesk } from 'next/font/google';
 import type { ReactNode } from 'react';
 
@@ -51,6 +52,23 @@ export default async function RootLayout({
 }: {
   children: ReactNode;
 }): Promise<JSX.Element> {
+  const headerStore = headers();
+  const pathname = headerStore.get('x-pathname') ?? '';
+  const isAdmin = pathname.startsWith('/admin');
+
+  if (isAdmin) {
+    // Admin section renders its own chrome (and its own gate). The root
+    // layout still mounts globals.css and the document shell, but skips
+    // the public site header/footer/cursor.
+    return (
+      <html lang="en" className={displaySans.variable}>
+        <body className="flex min-h-screen flex-col bg-background text-foreground">
+          {children}
+        </body>
+      </html>
+    );
+  }
+
   const bio = await getBio();
 
   return (

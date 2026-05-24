@@ -358,7 +358,7 @@ describe('validatePublishable', () => {
     if (result.ok) {
       throw new Error('expected failure');
     }
-    expect(result.missing.sort()).toEqual(
+    expect([...result.missing].sort()).toEqual(
       ['missing_cover_media', 'no_media_items'].sort()
     );
   });
@@ -399,7 +399,7 @@ describe('validatePublishable', () => {
     if (result.ok) {
       throw new Error('expected failure');
     }
-    expect(result.missing.sort()).toEqual(
+    expect([...result.missing].sort()).toEqual(
       ['missing_title', 'missing_cover_media', 'missing_alt_text(m-1)'].sort()
     );
   });

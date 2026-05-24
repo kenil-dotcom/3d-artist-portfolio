@@ -48,6 +48,10 @@ prisma/*.db-journal
 # Local media uploads (if any)
 uploads/
 
+# Admin CMS uploads (only the .gitkeep is committed)
+public/uploads/*
+!public/uploads/.gitkeep
+
 # Local debug / probe scripts (ad-hoc, never committed)
 _check_*.cjs
 _check_*.js

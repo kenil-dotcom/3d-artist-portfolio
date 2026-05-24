@@ -129,11 +129,11 @@ describe('listGallery: filtering', () => {
 
     const r1 = listGallery(
       projects,
-      makeQuery({ tags: ['x', 'y'] as ReadonlyArray<TagId> }),
+      makeQuery({ tags: ['x', 'y'] as unknown as ReadonlyArray<TagId> }),
     );
     const r2 = listGallery(
       projects,
-      makeQuery({ tags: ['y', 'x'] as ReadonlyArray<TagId> }),
+      makeQuery({ tags: ['y', 'x'] as unknown as ReadonlyArray<TagId> }),
     );
 
     expect(ids(r1.items)).toEqual(ids(r2.items));

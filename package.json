@@ -21,7 +21,8 @@
     "test:coverage": "vitest --run --coverage",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "seed": "prisma db seed"
+    "seed": "prisma db seed",
+    "admin:create": "tsx scripts/admin-create.ts"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

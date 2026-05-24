@@ -177,7 +177,7 @@ describe("buildProjectDetail", () => {
     const project = makeProject({
       title: "Hero Render",
       description: "Lighting study.",
-      tagIds: ["t-character", "t-fantasy"] as ReadonlyArray<TagId>,
+      tagIds: ["t-character", "t-fantasy"] as unknown as ReadonlyArray<TagId>,
       softwareUsed: ["Blender", "Substance Painter"] as ReadonlyArray<string>,
       creationDate: "2024-05-12" as IsoDate,
     });
@@ -262,7 +262,7 @@ describe("buildProjectDetail", () => {
 
   it("orders tagLabels by project.tagIds, not by the input tag pool", () => {
     const project = makeProject({
-      tagIds: ["t-z", "t-a", "t-m"] as ReadonlyArray<TagId>,
+      tagIds: ["t-z", "t-a", "t-m"] as unknown as ReadonlyArray<TagId>,
     });
     const pool = [
       makeTag("t-a", "Alpha"),
@@ -277,7 +277,7 @@ describe("buildProjectDetail", () => {
 
   it("skips tag ids that are missing from the supplied tag pool", () => {
     const project = makeProject({
-      tagIds: ["t-known", "t-orphan"] as ReadonlyArray<TagId>,
+      tagIds: ["t-known", "t-orphan"] as unknown as ReadonlyArray<TagId>,
     });
     const pool = [makeTag("t-known", "Known")];
 

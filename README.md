@@ -64,3 +64,42 @@ Every implementation task is listed in `.kiro/specs/3d-artist-portfolio/tasks.md
 ```ts
 // **Validates: Requirements 2.1, 2.3, 2.4, 2.5, 2.6, 2.8, 2.9, 2.10, 8.7**
 ```
+
+## Admin CMS
+
+The site ships with a single-admin content management system mounted at `/admin`. It is a thin Next.js layer over Prisma — no NextAuth, no third-party auth — designed for one operator and one artist portfolio.
+
+### Initial setup
+
+Create or rotate the admin account from the command line:
+
+```bash
+npm run admin:create
+```
+
+The script prompts for a username (1..60 chars) and password (≥ 8 chars, masked input), hashes the password with argon2id, and upserts the row in `admin_users`. Run it any time to rotate credentials — only one admin row exists.
+
+### Logging in
+
+Visit `/admin/login`, enter the credentials you set with `admin:create`, and you'll land on the dashboard. Sessions are HTTP-only, signed cookies that idle out after 8 hours and hard-expire after 24 hours. The login response is artificially padded to ~1 second so the endpoint can't be brute-forced beyond roughly one attempt per second per connection.
+
+To sign out, click "Sign out" in the admin top bar.
+
+### What you can manage
+
+| Section | Notes |
+| --- | --- |
+| **Dashboard** | Counts for published / draft projects and total / unread inquiries; quick links to the most common actions. |
+| **Projects** | Create, edit, delete projects. Each editor covers title, slug (auto-generated from title, editable), description, category, tags, software, creation date, status, cover image, featured order, and the media list (with up/down reordering, alt text, captions, and per-item delete). Publishing is gated by the `validatePublishable` rules — title, cover image, every image media item must have alt text. |
+| **Bio** | Singleton bio editor: artist name, tagline, biography, skills (chip multi-input), software (chip multi-input), social links (repeatable rows), profile image upload, resume PDF upload. |
+| **Featured** | Pick up to 12 published projects to feature on the landing page; lower numbers come first. The pure validator at `lib/validation/featured.ts` enforces uniqueness and bounds before save. |
+| **Inquiries** | Paginated inbox (25 per page) of contact + commission submissions, with type/status filters. The detail view renders every persisted field, reference image thumbnails for commissions, status change controls (mark read / archived / new), and a delete button. |
+
+### Image storage (known limitation)
+
+In dev, uploads are written to `public/uploads/{projectId}/{contentHash}.{ext}` (or `public/uploads/bio/...`). Files are SHA-256 keyed so re-uploading the same image is idempotent and CDN-immutable.
+
+`public/uploads/*` is git-ignored except for `.gitkeep`, so the directory exists in fresh clones but never carries binary blobs.
+
+**This is dev-only.** Vercel's serverless runtime treats the deployment bundle as read-only at runtime — uploads written from a request handler do not persist between invocations. Before going to production, swap the local upload path in `lib/admin/uploads.ts` for an S3/R2-backed implementation (the `lib/storage/` adapters are already wired for this).
+
