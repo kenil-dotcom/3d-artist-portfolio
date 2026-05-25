@@ -49,6 +49,12 @@ interface ProjectInitial {
   readonly softwareUsed: ReadonlyArray<string>;
   readonly creationDate: string;
   readonly status: 'draft' | 'scheduled' | 'published';
+  /**
+   * Pre-populated value for the `<input type="datetime-local">` revealed
+   * when status is `scheduled`. Format is `YYYY-MM-DDTHH:mm` (the format
+   * the input expects). `null` when no schedule is set.
+   */
+  readonly scheduledAt: string | null;
   readonly coverMediaId: string | null;
   readonly featuredOrder: string;
 }
@@ -155,9 +161,9 @@ export function ProjectEditorForm({
 
         <div className="mt-6 grid gap-6 md:grid-cols-2">
           <StatusField
-            initialStatus={
-              initial.status === 'published' ? 'published' : 'draft'
-            }
+            initialStatus={initial.status}
+            initialScheduledAt={initial.scheduledAt}
+            scheduledAtError={state.errors['scheduledAt']}
           />
           <FeaturedOrderField
             initial={initial.featuredOrder}
@@ -517,37 +523,164 @@ function SoftwareField({
 
 function StatusField({
   initialStatus,
+  initialScheduledAt,
+  scheduledAtError,
 }: {
-  readonly initialStatus: 'draft' | 'published';
+  readonly initialStatus: 'draft' | 'scheduled' | 'published';
+  readonly initialScheduledAt: string | null;
+  readonly scheduledAtError: string | undefined;
 }): ReactElement {
-  const [status, setStatus] = useState<'draft' | 'published'>(initialStatus);
+  const [status, setStatus] = useState<'draft' | 'scheduled' | 'published'>(
+    initialStatus,
+  );
+  // The hidden `scheduledAt` field below is the canonical submission
+  // vehicle (mirroring the existing `status` pattern). The visible
+  // datetime-local input is the editing surface when `scheduled` is
+  // active; its value is held in React state so the hidden field can
+  // mirror it. When the admin switches away from `scheduled` we clear
+  // the local state so it round-trips to the server as an empty value.
+  const [scheduledAt, setScheduledAt] = useState<string>(
+    initialScheduledAt ?? '',
+  );
+
+  const groupHintId = useId();
+  const errorId = useId();
+
+  // Recompute the datetime bounds on every render so the values stay
+  // accurate as the page sits open. The browser-side validator catches
+  // out-of-range picks before the form is submitted; the server still
+  // re-checks via `parseScheduledAt`.
+  const minScheduledAt = formatDateTimeLocal(
+    new Date(Date.now() + 60 * 1000),
+  );
+  const maxScheduledAt = formatDateTimeLocal(
+    new Date(Date.now() + 365 * 86_400_000),
+  );
+
+  function selectStatus(next: 'draft' | 'scheduled' | 'published'): void {
+    setStatus(next);
+    if (next !== 'scheduled') {
+      // Clear the field locally so it round-trips as empty on save.
+      setScheduledAt('');
+    }
+  }
+
   return (
     <div>
-      <span className="label-field">Status</span>
       <input type="hidden" name="status" value={status} />
-      <div className="flex gap-2">
-        <button
-          type="button"
-          onClick={() => setStatus('draft')}
-          aria-pressed={status === 'draft'}
-          className={`chip ${status === 'draft' ? 'chip-active' : ''}`}
+      <input type="hidden" name="scheduledAt" value={scheduledAt} />
+
+      <fieldset>
+        <legend className="label-field">Status</legend>
+        <p id={groupHintId} className="sr-only">
+          Select one: Draft, Scheduled, or Published.
+        </p>
+        <div
+          role="radiogroup"
+          aria-describedby={groupHintId}
+          className="flex flex-wrap gap-2"
         >
-          Draft
-        </button>
-        <button
-          type="button"
-          onClick={() => setStatus('published')}
-          aria-pressed={status === 'published'}
-          className={`chip ${status === 'published' ? 'chip-active' : ''}`}
-        >
-          Published
-        </button>
-      </div>
+          <StatusRadio
+            label="Draft"
+            value="draft"
+            current={status}
+            onSelect={selectStatus}
+          />
+          <StatusRadio
+            label="Scheduled"
+            value="scheduled"
+            current={status}
+            onSelect={selectStatus}
+          />
+          <StatusRadio
+            label="Published"
+            value="published"
+            current={status}
+            onSelect={selectStatus}
+          />
+        </div>
+      </fieldset>
+
+      {status === 'scheduled' ? (
+        <div className="mt-4">
+          <label htmlFor="scheduledAt-input" className="label-field">
+            Publish at
+          </label>
+          <input
+            id="scheduledAt-input"
+            type="datetime-local"
+            required
+            min={minScheduledAt}
+            max={maxScheduledAt}
+            value={scheduledAt}
+            onChange={(e) => setScheduledAt(e.target.value)}
+            aria-invalid={scheduledAtError !== undefined}
+            aria-describedby={
+              scheduledAtError !== undefined ? errorId : undefined
+            }
+            className="input-field"
+          />
+          <p className="mt-1 text-xs text-muted">
+            Pick a time between one minute and 365 days from now. The cron
+            worker promotes the project to Published at that moment.
+          </p>
+          <FieldError id={errorId} message={scheduledAtError} />
+        </div>
+      ) : null}
+
       <p className="mt-2 text-xs text-muted">
         Publishing requires a title, a cover image, and at least one media
         item with alt text.
       </p>
     </div>
+  );
+}
+
+function StatusRadio({
+  label,
+  value,
+  current,
+  onSelect,
+}: {
+  readonly label: string;
+  readonly value: 'draft' | 'scheduled' | 'published';
+  readonly current: 'draft' | 'scheduled' | 'published';
+  readonly onSelect: (next: 'draft' | 'scheduled' | 'published') => void;
+}): ReactElement {
+  const inputId = useId();
+  const active = current === value;
+  return (
+    <>
+      <input
+        id={inputId}
+        type="radio"
+        name="statusChoice"
+        value={value}
+        checked={active}
+        onChange={() => onSelect(value)}
+        className="sr-only"
+      />
+      <label
+        htmlFor={inputId}
+        className={`chip cursor-pointer ${active ? 'chip-active' : ''}`}
+      >
+        {label}
+      </label>
+    </>
+  );
+}
+
+/**
+ * Format a `Date` as the local-time string the `datetime-local` input
+ * expects: `YYYY-MM-DDTHH:mm`. We deliberately use the local zone so the
+ * `min`/`max` bounds line up with what the user sees in the picker; the
+ * server-side `parseScheduledAt` does the authoritative UTC comparison.
+ */
+function formatDateTimeLocal(d: Date): string {
+  const pad = (n: number): string => n.toString().padStart(2, '0');
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
   );
 }
 

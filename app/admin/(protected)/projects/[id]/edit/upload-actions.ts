@@ -21,13 +21,15 @@ import {
   inferKindFromMime,
   type PresignedUpload,
 } from '@/lib/admin/presign';
+import { applyCoverSelection } from '@/lib/admin/cover';
 import { parseEmbedUrl } from '@/lib/admin/embeds';
 import {
   MIME_TO_EXT,
   putR2Object,
+  removeFromR2,
   removeFromR2ByPublicUrl,
 } from '@/lib/admin/uploads';
-import { generateVariants } from '@/lib/admin/variants';
+import { deleteVariantKeys, generateVariants } from '@/lib/admin/variants';
 import { prisma } from '@/lib/db/prisma';
 import {
   ALLOWED_MIME_TYPES_BY_KIND,
@@ -105,6 +107,31 @@ export type ReorderMediaResult =
       readonly ok: false;
       readonly error: string;
       readonly code: ReorderMediaErrorCode;
+    };
+
+/**
+ * Stable rejection codes for {@link replaceMediaFile}. Distinct from
+ * {@link FinalizeUploadErrorCode} because the replace path adds two
+ * codes (`unknown_media_id`, `kind_change_disallowed`) and reuses
+ * `upload_failed` for thrown-after-commit cases. The `unknown_media_id`
+ * code matches design.md "In-place media replacement" step 2 ("abort
+ * with `unknown_media_id` if missing") and aligns with the same code
+ * already used by `reorderMediaList` for foreign / missing ids.
+ */
+export type ReplaceMediaErrorCode =
+  | 'unknown_media_id'
+  | 'kind_change_disallowed'
+  | 'invalid_format'
+  | 'file_too_large'
+  | 'upload_failed'
+  | 'project_not_found';
+
+export type ReplaceMediaResult =
+  | { readonly ok: true; readonly value: FinalizedMediaItem }
+  | {
+      readonly ok: false;
+      readonly error: string;
+      readonly code: ReplaceMediaErrorCode;
     };
 
 // ---------------------------------------------------------------------------
@@ -365,24 +392,50 @@ export async function finalizeUpload(
     return (base + base + base + base + base + base + base + base).slice(0, 64);
   })();
 
-  const created = await prisma.mediaItem.create({
-    data: {
-      projectId,
-      storageKey: publicUrl,
-      contentHash,
-      mimeType: mime,
-      width: probed?.width ?? null,
-      height: probed?.height ?? null,
-      durationSec: null,
-      byteSize: Math.min(contentLength, MAX_MEDIA_BYTES),
-      kind,
-      altText: null,
-      caption: filename.trim().length > 0 ? null : null,
-      ordering,
-      embedUrl: null,
-      extension,
-      variantSet: EMPTY_VARIANT_SET as unknown as Prisma.InputJsonValue,
-    },
+  // The row insert and the first-image auto-set live inside the same
+  // transaction so the cover write and the row that satisfies it land
+  // atomically (Requirement 5.4 — design.md "Cover selection
+  // lifecycle"). The auto-set is positional: it triggers when the
+  // parent Project has `coverMediaId IS NULL` and the new item is
+  // image-kind, regardless of earlier non-image uploads. The internal
+  // `applyCoverSelection` helper bypasses the user-facing rejection
+  // codes and returns silently on the no-op path.
+  const created = await prisma.$transaction(async (tx) => {
+    const row = await tx.mediaItem.create({
+      data: {
+        projectId,
+        storageKey: publicUrl,
+        contentHash,
+        mimeType: mime,
+        width: probed?.width ?? null,
+        height: probed?.height ?? null,
+        durationSec: null,
+        byteSize: Math.min(contentLength, MAX_MEDIA_BYTES),
+        kind,
+        altText: null,
+        caption: filename.trim().length > 0 ? null : null,
+        ordering,
+        embedUrl: null,
+        extension,
+        variantSet: EMPTY_VARIANT_SET as unknown as Prisma.InputJsonValue,
+      },
+    });
+
+    if (kind === 'image') {
+      const parent = await tx.project.findUnique({
+        where: { id: projectId },
+        select: { coverMediaId: true },
+      });
+      if (parent !== null && parent.coverMediaId === null) {
+        // Server-internal silent variant: any rejection envelope is a
+        // no-op for the auto-set path. The validator still guards
+        // against the (impossible-here, but defensively checked)
+        // foreign-project / non-image branches.
+        await applyCoverSelection(tx, projectId, row.id);
+      }
+    }
+
+    return row;
   });
 
   // ---- Variant generation (Requirement 6.3) ---------------------------
@@ -646,4 +699,274 @@ export async function reorderMediaList(
   revalidateAfterMediaChange(project?.slug ?? null);
 
   return { ok: true };
+}
+
+// ---------------------------------------------------------------------------
+// replaceMediaFile
+// ---------------------------------------------------------------------------
+
+/**
+ * Swap the file behind an existing Media_Item without losing its
+ * `id`, `projectId`, `altText`, `caption`, or `ordering`. The browser
+ * runs the same presign → PUT → finalize sequence used for fresh uploads
+ * and then calls this action with the resulting `publicUrl`. Section_Block
+ * references continue to point at the same `MediaItem.id` and remain
+ * valid (Requirement 4.6).
+ *
+ * Steps:
+ *
+ *   1. `requireAdmin()`.
+ *   2. Load the existing row (with its parent project's slug for
+ *      revalidation). A missing row resolves as `unknown_media_id`.
+ *   3. Compare `inferKindFromMime(contentType)` to the existing row's
+ *      `kind`. When they differ, return `kind_change_disallowed`
+ *      immediately and do **not** mutate the row, do **not** invalidate
+ *      the Variant_Set, do **not** delete any object from R2, do **not**
+ *      call sharp (Requirement 4.3). The just-uploaded orphan object at
+ *      `publicUrl` is left to the bucket lifecycle rule.
+ *   4. Validate MIME and size (same envelope as `finalizeUpload`); for
+ *      image kinds run a strict dimension probe (Requirement 2.10) and
+ *      reject with `invalid_format` when sharp cannot resolve positive
+ *      integer width and height. Best-effort delete of the new orphan
+ *      object before surfacing the rejection.
+ *   5. Inside a single Prisma transaction, update `storageKey`,
+ *      `contentHash`, `mimeType`, `byteSize`, `width`, `height`,
+ *      `extension`, **and** `variantSet = { renditions: [], failures: [] }`
+ *      while preserving `id`, `projectId`, `altText`, `caption`,
+ *      `ordering` (Requirement 4.2 / 4.4). Always invalidating the
+ *      Variant_Set ensures leftover renditions never serve stale bytes.
+ *   6. After the transaction commits, call {@link deleteVariantKeys} so
+ *      the prior renditions are removed from R2 (best-effort; per-key
+ *      failures are swallowed inside the helper). This runs for every
+ *      kind so video and model3d replacements also clear orphans.
+ *   7. Regenerate variants via {@link generateVariants} **only** when
+ *      the new `kind === 'image'`. Video and model3d replacements skip
+ *      the sharp pipeline entirely (Requirement 4.4 / 4.5).
+ *   8. Call `revalidateAfterMediaChange(slug)` so the next public
+ *      request to `/projects/{slug}` returns the new file
+ *      (Requirement 4.5).
+ *
+ * **Upload-failure rollback semantics.** If the browser's PUT to the new
+ * presigned URL fails or times out (the same 600-second / non-2xx
+ * envelope used for fresh uploads), the client never invokes
+ * `replaceMediaFile` and the existing row remains exactly as it was.
+ * If `replaceMediaFile` itself throws after step 5 has committed, the
+ * action returns `{ ok: false, code: 'upload_failed' }`; the variant-set
+ * invalidation in step 5 has already cleared `variantSet`, so the
+ * renderer falls back to the original `storageKey` rendering per
+ * Requirement 6.6 and the user-visible failure mode is "no responsive
+ * variants yet" rather than a broken row.
+ */
+export async function replaceMediaFile(
+  mediaId: string,
+  publicUrl: string,
+  contentType: string,
+  contentLength: number,
+  filename: string,
+): Promise<ReplaceMediaResult> {
+  await requireAdmin();
+  // `filename` is part of the action signature for parity with
+  // `finalizeUpload` and for future use by audit logging; the persisted
+  // row's identity does not change so we do not derive any column from
+  // it directly.
+  void filename;
+
+  // ---- Step 2: load the existing row + project slug ------------------
+  const existing = await prisma.mediaItem.findUnique({
+    where: { id: mediaId },
+    select: {
+      id: true,
+      projectId: true,
+      kind: true,
+      ordering: true,
+      altText: true,
+      caption: true,
+      embedUrl: true,
+      project: { select: { slug: true } },
+    },
+  });
+  if (existing === null) {
+    return {
+      ok: false,
+      code: 'unknown_media_id',
+      error: 'Media item not found.',
+    };
+  }
+
+  // ---- Step 3: kind-change guard (Requirement 4.3) -------------------
+  // The kind comparison runs before any MIME / size validation so a
+  // payload whose content type is in a different kind category gets the
+  // canonical `kind_change_disallowed` envelope. Crucially, no row
+  // mutation, variant invalidation, R2 delete, or sharp probe occurs on
+  // this branch; the orphan object at `publicUrl` is left to the bucket
+  // lifecycle rule.
+  const mime = contentType.trim().toLowerCase();
+  const inferredKind = inferKindFromMime(mime);
+  const existingKind = existing.kind as MediaKind;
+  if (inferredKind === null || inferredKind !== existingKind) {
+    return {
+      ok: false,
+      code: 'kind_change_disallowed',
+      error: `Replacement file kind does not match the existing ${existingKind} media.`,
+    };
+  }
+
+  // ---- Step 4: MIME and size validation ------------------------------
+  if (
+    !(ALLOWED_MIME_TYPES_BY_KIND[inferredKind] as ReadonlyArray<string>).includes(
+      mime,
+    )
+  ) {
+    return {
+      ok: false,
+      code: 'invalid_format',
+      error: `Content type "${mime}" not allowed for ${inferredKind}.`,
+    };
+  }
+  if (
+    !Number.isFinite(contentLength) ||
+    contentLength <= 0 ||
+    contentLength > MAX_MEDIA_BYTES
+  ) {
+    return {
+      ok: false,
+      code: 'file_too_large',
+      error: `Reported size ${contentLength} bytes is invalid.`,
+    };
+  }
+
+  // Lowercase file extension for the new row state; defensive
+  // `.toLowerCase()` survives any future map entry that ships a
+  // mixed-case extension (Requirement 2.11).
+  const mappedExtension = MIME_TO_EXT[mime];
+  const extension =
+    typeof mappedExtension === 'string' && mappedExtension.length > 0
+      ? mappedExtension.toLowerCase()
+      : null;
+
+  // ---- Step 4 (cont.): image dimension probe (Requirement 2.10) ------
+  let probed: ImageProbeOk | null = null;
+  if (inferredKind === 'image') {
+    probed = await probeImageBytes(publicUrl);
+    if (probed === null) {
+      // Best-effort cleanup of the orphan object before surfacing the
+      // rejection. The existing row is untouched.
+      try {
+        await removeFromR2ByPublicUrl(publicUrl);
+      } catch {
+        // best-effort
+      }
+      return {
+        ok: false,
+        code: 'invalid_format',
+        error: 'Could not read image dimensions; the replacement was rejected.',
+      };
+    }
+  }
+
+  // Stable pseudo-hash derived from the new public URL (matches the
+  // shape used by `finalizeUpload`).
+  const contentHash = (() => {
+    let h = 0xdeadbeef;
+    for (let i = 0; i < publicUrl.length; i++) {
+      h = Math.imul(h ^ publicUrl.charCodeAt(i), 16777619);
+    }
+    const base = (h >>> 0).toString(16).padStart(8, '0');
+    return (base + base + base + base + base + base + base + base).slice(0, 64);
+  })();
+
+  // ---- Step 5: transactional swap + Variant_Set invalidation ---------
+  // The transaction wraps the single UPDATE so the new `storageKey`
+  // and the cleared `variantSet` land atomically. `id`, `projectId`,
+  // `altText`, `caption`, `ordering` are not in the `data` payload and
+  // therefore preserved (Requirement 4.2). Section_Block references
+  // continue to point at the same `MediaItem.id` (Requirement 4.6).
+  let updated;
+  try {
+    updated = await prisma.$transaction(async (tx) => {
+      return tx.mediaItem.update({
+        where: { id: mediaId },
+        data: {
+          storageKey: publicUrl,
+          contentHash,
+          mimeType: mime,
+          byteSize: Math.min(contentLength, MAX_MEDIA_BYTES),
+          width: probed?.width ?? null,
+          height: probed?.height ?? null,
+          extension,
+          variantSet: EMPTY_VARIANT_SET as unknown as Prisma.InputJsonValue,
+        },
+      });
+    });
+  } catch (err) {
+    // The transaction failed before committing the new row state, so
+    // the existing row is still the canonical state. The just-uploaded
+    // object at `publicUrl` is now orphaned; leave it for the bucket
+    // lifecycle rule to reap.
+    void err;
+    return {
+      ok: false,
+      code: 'upload_failed',
+      error: 'Failed to persist replacement; the original media item is unchanged.',
+    };
+  }
+
+  // ---- Step 6: invalidate prior R2 variant objects (Requirement 4.4) -
+  // Best-effort: per-key failures are swallowed inside `deleteVariantKeys`
+  // so the row update still stands. Runs for every kind, so video and
+  // model3d replacements clear orphans from any prior image incarnation.
+  try {
+    await deleteVariantKeys(mediaId, {
+      remove: async (key) => {
+        await removeFromR2(key);
+      },
+    });
+  } catch {
+    // best-effort
+  }
+
+  // ---- Step 7: regenerate variants for image kinds only --------------
+  let variantSet: VariantSet = EMPTY_VARIANT_SET;
+  if (inferredKind === 'image' && probed !== null) {
+    try {
+      variantSet = await generateVariants(
+        {
+          mediaId: updated.id,
+          sourceBuffer: probed.buffer,
+          originalWidth: probed.width,
+        },
+        { put: putR2Object },
+      );
+      await prisma.mediaItem.update({
+        where: { id: updated.id },
+        data: {
+          variantSet: variantSet as unknown as Prisma.InputJsonValue,
+        },
+      });
+    } catch {
+      // Leave the row with the empty variant set; the renderer falls
+      // back to the original `storageKey` per Requirement 6.6.
+    }
+  }
+
+  // ---- Step 8: revalidate public + admin surfaces --------------------
+  revalidateAfterMediaChange(existing.project.slug);
+
+  return {
+    ok: true,
+    value: {
+      id: updated.id,
+      storageKey: updated.storageKey,
+      mimeType: updated.mimeType,
+      kind: updated.kind as MediaKind,
+      altText: updated.altText,
+      caption: updated.caption,
+      ordering: updated.ordering,
+      width: updated.width,
+      height: updated.height,
+      embedUrl: updated.embedUrl,
+      extension: updated.extension,
+      variantSet,
+    },
+  };
 }

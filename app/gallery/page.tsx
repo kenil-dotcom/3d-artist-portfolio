@@ -31,6 +31,7 @@ import type {
   Project,
   Tag,
   TagId,
+  VariantSet,
 } from '@/lib/types/domain';
 
 export const dynamic = 'force-dynamic';
@@ -262,6 +263,7 @@ function GalleryTile({ project, category, priority }: GalleryTileProps): ReactEl
             width={cover.width}
             height={cover.height}
             priority={priority}
+            variantSet={cover.variantSet}
           />
         )}
         <div
@@ -344,6 +346,7 @@ function findCover(project: Project): {
   alt: string;
   width: number;
   height: number;
+  variantSet: VariantSet;
 } | null {
   const all = project.mediaItems;
   let item =
@@ -361,6 +364,7 @@ function findCover(project: Project): {
     alt: item.altText ?? `${project.title} cover image`,
     width: item.ref.width ?? 1600,
     height: item.ref.height ?? 1200,
+    variantSet: item.variantSet,
   };
 }
 

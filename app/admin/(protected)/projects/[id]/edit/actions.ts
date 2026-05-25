@@ -15,6 +15,7 @@ import { revalidatePath } from 'next/cache';
 import { redirect } from 'next/navigation';
 
 import { requireAdmin } from '@/lib/auth/middleware';
+import { applyCoverSelection, type CoverErrorCode } from '@/lib/admin/cover';
 import { removeFromR2, storeProjectMedia } from '@/lib/admin/uploads';
 import { deleteVariantKeys } from '@/lib/admin/variants';
 import { slugify } from '@/lib/admin/slug';
@@ -34,12 +35,17 @@ import {
   validateProjectInput,
   validatePublishable,
   normalizeSoftwareList,
+  RULE_ORDER,
   SOFTWARE_ENTRY_MAX_LENGTH,
   SOFTWARE_ENTRY_MIN_LENGTH,
   SOFTWARE_USED_MAX,
   TITLE_MAX_LENGTH,
 } from '@/lib/validation/project';
 import { normalizeAltText, normalizeCaption } from '@/lib/validation/media';
+import {
+  applyStatusTransition,
+  parseScheduledAt,
+} from '@/lib/validation/schedule';
 
 // ---------------------------------------------------------------------------
 // Action result shape
@@ -140,14 +146,63 @@ async function reloadProjectAsDomain(id: string): Promise<Project | null> {
   };
 }
 
-function revalidateProjectPaths(slug: string | null): void {
-  revalidatePath('/admin/projects');
-  revalidatePath('/admin');
-  revalidatePath('/');
-  revalidatePath('/gallery');
-  if (slug !== null && slug.length > 0) {
-    revalidatePath(`/projects/${slug}`);
+/**
+ * Wrap each `revalidatePath` call in try/catch and collect failures so a
+ * single bad path does not abort the rest of the revalidation sweep, and
+ * so the action boundary can surface the failures as a non-blocking
+ * warning banner per Requirement 14.5.
+ *
+ * The persisted database mutation is **not** rolled back when a
+ * revalidation fails — the database is the canonical source of truth,
+ * and a failed `revalidatePath` only delays the public surface from
+ * picking up the change until the next ISR window.
+ *
+ * Each warning is shaped as `${path}: ${reason}` so the banner can list
+ * the offending path inline.
+ *
+ * `async` because every export from a `'use server'` module must be an
+ * async function. `revalidatePath` itself is synchronous, so the body
+ * never awaits anything.
+ */
+export async function revalidatePathsCollectingWarnings(
+  paths: ReadonlyArray<string>,
+): Promise<string[]> {
+  const warnings: string[] = [];
+  for (const path of paths) {
+    try {
+      revalidatePath(path);
+    } catch (err) {
+      const reason = err instanceof Error ? err.message : String(err);
+      warnings.push(`${path}: ${reason}`);
+    }
   }
+  return warnings;
+}
+
+/**
+ * Revalidate every admin and public surface affected by a Project
+ * mutation. Returns the list of failure messages produced by
+ * `revalidatePathsCollectingWarnings` so callers (notably the
+ * section-block server actions) can surface them on their `Result.value`
+ * envelope. Existing call sites that ignore the return value continue to
+ * work unchanged.
+ *
+ * Paths revalidated, per Requirement 14.1–14.3 and design.md "Cache
+ * revalidation":
+ *   - `/admin/projects` (admin index)
+ *   - `/admin`          (admin dashboard featured grid)
+ *   - `/`               (home page featured grid)
+ *   - `/gallery`        (public gallery index)
+ *   - `/projects/{slug}` (public detail page) when the slug is non-empty
+ */
+export async function revalidateProjectPaths(
+  slug: string | null,
+): Promise<string[]> {
+  const paths: string[] = ['/admin/projects', '/admin', '/', '/gallery'];
+  if (slug !== null && slug.length > 0) {
+    paths.push(`/projects/${slug}`);
+  }
+  return revalidatePathsCollectingWarnings(paths);
 }
 
 // ---------------------------------------------------------------------------
@@ -169,8 +224,16 @@ export async function saveProject(
   const softwareRaw = parseStringList(formData, 'softwareUsed');
   const creationDate = (formData.get('creationDate') ?? '').toString();
   const statusRaw = (formData.get('status') ?? 'draft').toString();
+  // Tri-state status (Requirement 7.1). Any unknown string falls back to
+  // `draft` so a malformed POST never silently flips the project to a
+  // published or scheduled state.
   const status: ProjectStatus =
-    statusRaw === 'published' ? 'published' : 'draft';
+    statusRaw === 'published'
+      ? 'published'
+      : statusRaw === 'scheduled'
+        ? 'scheduled'
+        : 'draft';
+  const scheduledAtRaw = (formData.get('scheduledAt') ?? '').toString();
   const featuredOrder = parseFeaturedOrder(
     (formData.get('featuredOrder') ?? '').toString(),
   );
@@ -236,6 +299,30 @@ export async function saveProject(
     }
   }
 
+  // Parse `scheduledAt` when the admin selected the `scheduled` tri-state
+  // option (Requirements 7.2, 7.3, 7.4). Both bounds — past timestamps
+  // and timestamps more than 365 days ahead — collapse onto a single
+  // `scheduled_at_in_past` rejection code per `parseScheduledAt`'s
+  // contract; missing / unparseable values reject with
+  // `scheduled_at_missing`. Errors are attributed to the `scheduledAt`
+  // field so the editor surfaces them inline. On rejection the existing
+  // per-field-errors short-circuit below leaves the persisted Project
+  // values unchanged — no column write happens before the early return.
+  let parsedScheduledAt: Date | null = null;
+  if (status === 'scheduled') {
+    const parsed = parseScheduledAt(scheduledAtRaw, new Date());
+    if (!parsed.ok) {
+      if (errors['scheduledAt'] === undefined) {
+        errors['scheduledAt'] =
+          parsed.code === 'scheduled_at_missing'
+            ? 'Pick a publish date.'
+            : 'Pick a date between now and 365 days from now.';
+      }
+    } else {
+      parsedScheduledAt = parsed.value;
+    }
+  }
+
   if (Object.keys(errors).length > 0) {
     return {
       status: 'error',
@@ -269,14 +356,28 @@ export async function saveProject(
   };
 
   if (projectId === null) {
-    // Create path. Cover media id is rejected here because no media
+    // Create path (defensive — the live create surface is
+    // `app/admin/(protected)/projects/new/actions.ts`; this branch
+    // exists only because `saveProject` is bound with a nullable
+    // `projectId`). Cover media id is rejected here because no media
     // items exist yet — the editor gets a chance to upload them in a
-    // subsequent save.
+    // subsequent save. Creation always starts in `draft`; `scheduled`
+    // is forbidden on this path because there is no project row yet
+    // for the publish-readiness gate to run against.
+    if (status === 'scheduled') {
+      return {
+        status: 'error',
+        message: 'New projects must start as draft.',
+        errors: { status: 'New projects must start as draft.' },
+      };
+    }
     const row = await prisma.project.create({
       data: {
         ...data,
+        status: status === 'published' ? 'published' : 'draft',
         coverMediaId: null,
         publishedAt: status === 'published' ? new Date() : null,
+        scheduledAt: null,
       },
       select: { id: true, slug: true },
     });
@@ -317,8 +418,15 @@ export async function saveProject(
     };
   }
 
-  // Publish-readiness gate. Only enforced when transitioning to published.
-  if (status === 'published') {
+  // Publish-readiness gate. Required for any transition to either
+  // `scheduled` or `published` (Requirement 8.1) — both states make the
+  // project visible to the public surface (immediately for `published`,
+  // at the cron tick for `scheduled`), so the same checklist guards
+  // both paths. Failing codes come back in `RULE_ORDER` so the editor
+  // can render them in stable order; the persisted state is left
+  // unchanged on rejection because the early return happens before any
+  // column write.
+  if (status === 'published' || status === 'scheduled') {
     const ready = await reloadProjectAsDomain(projectId);
     if (ready !== null) {
       const next: Project = {
@@ -327,30 +435,47 @@ export async function saveProject(
       };
       const check = validatePublishable(next);
       if (!check.ok) {
+        const ordered = RULE_ORDER.filter((code) => check.missing.includes(code));
         return {
           status: 'error',
-          message: `Cannot publish: ${check.missing.join(', ')}.`,
+          message: `Cannot ${status === 'published' ? 'publish' : 'schedule'}: ${ordered.join(', ')}.`,
           errors: {},
         };
       }
     }
   }
 
-  // Compute publishedAt: stamp on first transition to published, clear
-  // when reverting to draft.
-  let publishedAt: Date | null = current.publishedAt ?? null;
-  if (status === 'published' && publishedAt === null) {
-    publishedAt = new Date();
-  } else if (status === 'draft') {
-    publishedAt = null;
-  }
+  // Canonical (status, scheduledAt, publishedAt) triple per
+  // Requirements 7.5 / 7.6. The reducer is total over the three values
+  // of `next.status`:
+  //   - draft     → both timestamps null
+  //   - published → scheduledAt cleared, publishedAt preserved when set
+  //                 else stamped with `now`
+  //   - scheduled → scheduledAt = parsed value, publishedAt unchanged
+  // Computing the triple here keeps the persistence step a straight
+  // write of three columns and means the rules live in exactly one
+  // place (`lib/validation/schedule.ts`).
+  const now = new Date();
+  const transition = applyStatusTransition(
+    {
+      status: current.status as ProjectStatus,
+      scheduledAt: null,
+      publishedAt: current.publishedAt ?? null,
+    },
+    status === 'scheduled'
+      ? { status: 'scheduled', scheduledAt: parsedScheduledAt as Date }
+      : { status },
+    now,
+  );
 
   await prisma.$transaction(async (tx) => {
     await tx.project.update({
       where: { id: projectId },
       data: {
         ...data,
-        publishedAt,
+        status: transition.status,
+        scheduledAt: transition.scheduledAt,
+        publishedAt: transition.publishedAt,
       },
     });
     await tx.projectTag.deleteMany({ where: { projectId } });
@@ -361,8 +486,30 @@ export async function saveProject(
     }
   });
 
-  revalidateProjectPaths(current.slug);
-  revalidateProjectPaths(slugCandidate);
+  // Slug-rename revalidation (Requirement 14.4).
+  //
+  // When the slug has changed the public surface carries TWO project
+  // URLs that need flushing: the previous `/projects/{oldSlug}` (so it
+  // stops returning the stale page or starts returning 404) and the
+  // new `/projects/{newSlug}` (so the renamed project is reachable on
+  // the next public request). Both helper invocations are required —
+  // dropping either one strands one of the two URLs in the ISR cache.
+  //
+  // When the slug is unchanged we revalidate once. The comparison is
+  // extracted into a named boolean so the branches read as a single
+  // intent rather than two independent calls.
+  const oldSlug = current.slug;
+  const newSlug = slugCandidate;
+  const slugChanged = oldSlug !== newSlug;
+  if (slugChanged) {
+    // Old slug first so the cached old URL is invalidated before the
+    // new slug becomes the canonical route on the gallery / home
+    // featured grids.
+    revalidateProjectPaths(oldSlug);
+    revalidateProjectPaths(newSlug);
+  } else {
+    revalidateProjectPaths(newSlug);
+  }
 
   return {
     status: 'success',
@@ -540,35 +687,49 @@ export async function deleteMediaItem(formData: FormData): Promise<void> {
 }
 
 /**
- * Set the cover media for a project. The selected media item must belong
- * to the project and be an image. Used by the per-item "Set as cover"
- * button on the editor.
+ * Result envelope for {@link setCoverMedia}. The action is the source
+ * of truth for cover-selection validation: it refuses missing items
+ * with `cover_media_not_found`, foreign items with
+ * `cover_not_in_project`, and non-image items with `cover_must_be_image`
+ * (Requirements 5.1, 5.2, 5.3). On every rejection branch
+ * `Project.coverMediaId` is left exactly as it was — no column write
+ * occurs on the rejection path (design.md "Cover selection lifecycle").
  */
-export async function setCoverMedia(formData: FormData): Promise<void> {
-  'use server';
+export type SetCoverMediaResult =
+  | { readonly ok: true }
+  | { readonly ok: false; readonly code: CoverErrorCode };
+
+/**
+ * Set the cover media for a project. The selected media item must
+ * belong to the project and be an image. Used by the per-item
+ * "Set as cover" button on the editor and by the auto-set path in
+ * `finalizeUpload` (which routes through {@link applyCoverSelection}
+ * directly so it can join the same transaction as the row insert).
+ *
+ * Validation is delegated to {@link applyCoverSelection} so the same
+ * invariants (no write on rejection, identical rejection codes) hold
+ * for both the user-facing and the server-internal call sites.
+ */
+export async function setCoverMedia(
+  projectId: string,
+  mediaId: string,
+): Promise<SetCoverMediaResult> {
   await requireAdmin();
 
-  const projectId = (formData.get('projectId') ?? '').toString();
-  const mediaId = (formData.get('mediaId') ?? '').toString();
-  if (projectId.length === 0 || mediaId.length === 0) return;
+  if (projectId.length === 0 || mediaId.length === 0) {
+    return { ok: false, code: 'cover_media_not_found' };
+  }
 
-  const item = await prisma.mediaItem.findUnique({
-    where: { id: mediaId },
-    select: {
-      projectId: true,
-      kind: true,
-      project: { select: { slug: true } },
-    },
-  });
-  if (item === null || item.projectId !== projectId) return;
-  if (item.kind !== 'image') return;
+  const result = await prisma.$transaction((tx) =>
+    applyCoverSelection(tx, projectId, mediaId),
+  );
 
-  await prisma.project.update({
-    where: { id: projectId },
-    data: { coverMediaId: mediaId },
-  });
+  if (!result.ok) {
+    return { ok: false, code: result.code };
+  }
 
-  revalidateProjectPaths(item.project.slug);
+  revalidateProjectPaths(result.slug);
+  return { ok: true };
 }
 
 /**

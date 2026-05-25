@@ -44,6 +44,7 @@ import { CSS } from '@dnd-kit/utilities';
 import {
   addYouTubeEmbed,
   finalizeUpload,
+  replaceMediaFile,
   reorderMediaList,
   requestUploadUrl,
 } from '@/app/admin/(protected)/projects/[id]/edit/upload-actions';
@@ -87,11 +88,57 @@ interface QueuedFile {
   readonly id: string;
   readonly file: File;
   readonly previewUrl: string | null;
-  status: 'waiting' | 'uploading' | 'done' | 'error';
+  /**
+   * `permanently_failed` is reached after MAX_UPLOAD_ATTEMPTS unsuccessful
+   * tries. Once a file is in that state the "Retry" affordance is hidden and
+   * the final failure reason is retained next to the row; no Media_Item row
+   * is ever created for it (Requirement 13.4 / 13.5).
+   */
+  status: 'waiting' | 'uploading' | 'done' | 'error' | 'permanently_failed';
   progress: number;
   error: string | null;
   xhr: XMLHttpRequest | null;
+  /**
+   * Number of upload attempts that have been started for this file (initial
+   * plus retries). Capped by MAX_UPLOAD_ATTEMPTS = 3. Counted at the moment
+   * the file transitions from `waiting` -> `uploading`, so a file in `error`
+   * state already has its attempt for that try recorded.
+   */
+  attemptCount: number;
 }
+
+/**
+ * Maximum number of times a queued file may be uploaded before it is marked
+ * `permanently_failed`. Three matches the Requirement 13.4 budget (initial
+ * plus two retries).
+ */
+const MAX_UPLOAD_ATTEMPTS = 3;
+
+/**
+ * Tick interval (ms) used to nudge React into re-rendering the per-file
+ * progress bar even when the network goes quiet between XHR `progress`
+ * events. Requirement 13.7 demands the displayed integer percentage refresh
+ * at least every 500 ms while a file is in `uploading` status.
+ */
+const PROGRESS_TICK_MS = 500;
+
+/**
+ * Maximum tolerated wall-clock duration of a synchronous `xhr.abort()` call.
+ * `XMLHttpRequest.abort()` is synchronous in every supported browser, so the
+ * elapsed time is expected to be well under this bound; if it exceeds the
+ * bound we log a warning so a regression in the cancel path becomes visible
+ * (Requirement 13.6).
+ */
+const ABORT_BUDGET_MS = 1000;
+
+/**
+ * Per-row replacement state for the "Replace file" affordance. Stored
+ * separately from the global upload `queue` so the per-row progress UI
+ * does not collide with the multi-file uploader. The map is keyed by
+ * `mediaId` (the existing Media_Item being replaced); the `QueuedFile`
+ * shape is reused so we share progress / status rendering helpers.
+ */
+type ReplaceState = QueuedFile;
 
 const ACCEPTED_MIME = [
   'image/jpeg',
@@ -123,6 +170,9 @@ export function ProjectMediaManager({
   const [items, setItems] = useState<ReadonlyArray<MediaItemView>>(initialMedia);
   const [coverId, setCoverId] = useState<string | null>(initialCoverMediaId);
   const [queue, setQueue] = useState<ReadonlyArray<QueuedFile>>([]);
+  const [replaceStates, setReplaceStates] = useState<
+    ReadonlyMap<string, ReplaceState>
+  >(() => new Map());
   const [embedInput, setEmbedInput] = useState('');
   const [embedError, setEmbedError] = useState<string | null>(null);
   const [embedPending, setEmbedPending] = useState(false);
@@ -134,6 +184,27 @@ export function ProjectMediaManager({
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const queueRef = useRef<ReadonlyArray<QueuedFile>>(queue);
   queueRef.current = queue;
+
+  // ---- Reorder debounce + abort-timeout machinery -----------------------
+  // The reorder submission is debounced by 500 ms after the last drop, so a
+  // burst of drag-and-drop adjustments collapses into a single network round
+  // trip. The in-flight submission is wrapped in an AbortController with a
+  // 10-second client-side ceiling.
+  //
+  // Caveat: server actions in Next.js are not natively cancellable via
+  // `AbortSignal` (the runtime does not propagate the signal to the server).
+  // The AbortController is therefore used purely as a client-side "give up"
+  // signal: on timeout or supersedence we revert local state and ignore the
+  // eventual server response. The server action may still commit the
+  // already-started write; the user sees the revert + error and can re-drop.
+  // The same envelope (500 ms debounce, 10 s timeout, snapshot revert) will
+  // be applied to `components/admin/ProjectSectionEditor.tsx` when task 6.3
+  // lands so both reorder surfaces share the timing contract.
+  const reorderTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const reorderAbortRef = useRef<AbortController | null>(null);
+  const reorderSnapshotRef = useRef<ReadonlyArray<MediaItemView> | null>(null);
+  const itemsRef = useRef<ReadonlyArray<MediaItemView>>(items);
+  itemsRef.current = items;
 
   // ---- Drag-and-drop file capture (page-level) -------------------------
   useEffect(() => {
@@ -177,6 +248,20 @@ export function ProjectMediaManager({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // ---- Cleanup pending reorder timers / aborts on unmount --------------
+  useEffect(() => {
+    return () => {
+      if (reorderTimerRef.current !== null) {
+        clearTimeout(reorderTimerRef.current);
+        reorderTimerRef.current = null;
+      }
+      if (reorderAbortRef.current !== null) {
+        reorderAbortRef.current.abort();
+        reorderAbortRef.current = null;
+      }
+    };
+  }, []);
+
   // ---- Queue helpers ---------------------------------------------------
   // Sequential uploader. Drains the queue one item at a time so concurrent
   // multi-GB uploads don't hammer R2 from a single tab.
@@ -186,7 +271,29 @@ export function ProjectMediaManager({
     if (pending === undefined) return;
     if (queueRef.current.some((q) => q.status === 'uploading')) return;
 
-    updateQueueItem(pending.id, { status: 'uploading', progress: 0 });
+    const nextAttempt = pending.attemptCount + 1;
+    updateQueueItem(pending.id, {
+      status: 'uploading',
+      progress: 0,
+      attemptCount: nextAttempt,
+    });
+
+    // Force a setState tick every 500 ms while this file is in `uploading`
+    // status. The XHR `progress` event fires opportunistically on each
+    // network buffer flush; on a stalled connection it can go silent for
+    // many seconds. The interval re-applies the latest known progress
+    // value so the displayed integer percentage in [0, 100] never appears
+    // frozen for more than 500 ms (Requirement 13.7).
+    const progressTickId = setInterval(() => {
+      setQueue((current) =>
+        current.map((q) =>
+          q.id === pending.id && q.status === 'uploading'
+            ? { ...q, progress: q.progress }
+            : q,
+        ),
+      );
+    }, PROGRESS_TICK_MS);
+
     try {
       const newItem = await uploadOne(pending);
       if (newItem !== null) {
@@ -204,7 +311,26 @@ export function ProjectMediaManager({
       updateQueueItem(pending.id, { status: 'done', progress: 100 });
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);
-      updateQueueItem(pending.id, { status: 'error', error: msg });
+      // Per-file retry budget (Requirement 13.4 / 13.5): after the third
+      // failed attempt the file is marked `permanently_failed`, the Retry
+      // affordance is hidden, and the final failure reason is retained.
+      // No Media_Item row was ever created because `uploadOne` only
+      // returns a row on the success branch.
+      if (nextAttempt >= MAX_UPLOAD_ATTEMPTS) {
+        updateQueueItem(pending.id, {
+          status: 'permanently_failed',
+          error: msg,
+          xhr: null,
+        });
+      } else {
+        updateQueueItem(pending.id, {
+          status: 'error',
+          error: msg,
+          xhr: null,
+        });
+      }
+    } finally {
+      clearInterval(progressTickId);
     }
     // Drain remaining items.
     setTimeout(() => {
@@ -228,6 +354,7 @@ export function ProjectMediaManager({
           progress: 0,
           error: null,
           xhr: null,
+          attemptCount: 0,
         });
       }
       if (next.length === 0) return;
@@ -294,10 +421,27 @@ export function ProjectMediaManager({
   function cancelUpload(id: string): void {
     const target = queue.find((q) => q.id === id);
     if (target?.xhr !== null && target?.xhr !== undefined) {
+      // Cancel-abort assertion (Requirement 13.6): `xhr.abort()` is
+      // synchronous in every supported browser, so the elapsed wall-clock
+      // time should be effectively zero. We bracket the call with a
+      // `Date.now()` check and emit a `console.warn` if it ever exceeds
+      // 1 s — that would signal a regression in the cancel path. The
+      // file is removed from the queue regardless, and `finalizeUpload`
+      // is never invoked because `uploadOne` rejects with "Upload
+      // cancelled." on the `xhr.onabort` handler before the finalize call
+      // is reached.
+      const startedAt = Date.now();
       try {
         target.xhr.abort();
       } catch {
-        // ignore
+        // ignore — we still want to remove the entry from the queue
+      }
+      const elapsed = Date.now() - startedAt;
+      if (elapsed > ABORT_BUDGET_MS) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[ProjectMediaManager] xhr.abort() took ${elapsed} ms, exceeding the ${ABORT_BUDGET_MS} ms budget.`,
+        );
       }
     }
     setQueue((current) => current.filter((q) => q.id !== id));
@@ -305,17 +449,186 @@ export function ProjectMediaManager({
 
   function retryUpload(id: string): void {
     setQueue((current) =>
-      current.map((q) =>
-        q.id === id ? { ...q, status: 'waiting', error: null, progress: 0 } : q,
-      ),
+      current.map((q) => {
+        if (q.id !== id) return q;
+        // Per Requirement 13.4 / 13.5 a `permanently_failed` file has
+        // exhausted its retry budget; the Retry affordance is hidden, but
+        // we belt-and-brace here in case the button is reached via some
+        // other path (e.g., keyboard tab order before the next render).
+        if (q.status === 'permanently_failed') return q;
+        return { ...q, status: 'waiting', error: null, progress: 0 };
+      }),
     );
     void runQueue();
   }
 
   function clearFinishedQueue(): void {
+    // `permanently_failed` rows are intentionally NOT cleared here so the
+    // final failure reason stays visible until the admin explicitly
+    // removes the row via the Remove affordance (Requirement 13.5).
     setQueue((current) =>
       current.filter((q) => q.status !== 'done' && q.status !== 'error'),
     );
+  }
+
+  // ---- Per-row "Replace file" pipeline --------------------------------
+  // Re-uses the same presign → PUT envelope as fresh uploads but calls
+  // `replaceMediaFile(mediaId, ...)` instead of `finalizeUpload`. Per-row
+  // progress is keyed by `mediaId` in `replaceStates` so it never
+  // collides with the global multi-file `queue`. On success the row in
+  // `items` is replaced by id (preserving its position so `altText`,
+  // `caption`, and `ordering` stay visible without a refresh). On the
+  // `kind_change_disallowed` rejection branch the original row is left
+  // unchanged and the error is rendered inline against the row.
+  function patchReplaceState(mediaId: string, patch: Partial<ReplaceState>): void {
+    setReplaceStates((current) => {
+      const existing = current.get(mediaId);
+      if (existing === undefined) return current;
+      const next = new Map(current);
+      next.set(mediaId, { ...existing, ...patch });
+      return next;
+    });
+  }
+
+  function clearReplaceState(mediaId: string): void {
+    setReplaceStates((current) => {
+      if (!current.has(mediaId)) return current;
+      const next = new Map(current);
+      next.delete(mediaId);
+      return next;
+    });
+  }
+
+  async function runReplace(mediaId: string, file: File): Promise<void> {
+    const isImage = file.type.startsWith('image/');
+    const previewUrl = isImage ? URL.createObjectURL(file) : null;
+    const initial: ReplaceState = {
+      id: mediaId,
+      file,
+      previewUrl,
+      status: 'uploading',
+      progress: 0,
+      error: null,
+      xhr: null,
+      attemptCount: 1,
+    };
+    setReplaceStates((current) => {
+      const next = new Map(current);
+      next.set(mediaId, initial);
+      return next;
+    });
+
+    // Force a re-render every 500 ms while the replace upload is in
+    // flight so the displayed percentage never goes stale between XHR
+    // `progress` events (Requirement 13.7). Mirrors the cadence used by
+    // the main upload queue in `runQueue`.
+    const progressTickId = setInterval(() => {
+      setReplaceStates((current) => {
+        const existing = current.get(mediaId);
+        if (existing === undefined || existing.status !== 'uploading') {
+          return current;
+        }
+        const next = new Map(current);
+        next.set(mediaId, { ...existing, progress: existing.progress });
+        return next;
+      });
+    }, PROGRESS_TICK_MS);
+
+    try {
+      const presignResult = await requestUploadUrl(
+        projectId,
+        file.name,
+        file.type || 'application/octet-stream',
+        file.size,
+      );
+      if (!presignResult.ok) {
+        patchReplaceState(mediaId, { status: 'error', error: presignResult.error });
+        return;
+      }
+      const { uploadUrl, publicUrl } = presignResult.value;
+
+      await new Promise<void>((resolve, reject) => {
+        const xhr = new XMLHttpRequest();
+        xhr.open('PUT', uploadUrl, true);
+        xhr.setRequestHeader('Content-Type', file.type || 'application/octet-stream');
+        xhr.upload.onprogress = (event) => {
+          if (event.lengthComputable) {
+            const percent = Math.round((event.loaded / event.total) * 100);
+            patchReplaceState(mediaId, { progress: percent });
+          }
+        };
+        xhr.onload = () => {
+          if (xhr.status >= 200 && xhr.status < 300) {
+            resolve();
+          } else {
+            reject(new Error(`R2 upload failed (${xhr.status}).`));
+          }
+        };
+        xhr.onerror = () => reject(new Error('Network error while uploading to R2.'));
+        xhr.onabort = () => reject(new Error('Upload cancelled.'));
+        patchReplaceState(mediaId, { xhr });
+        xhr.send(file);
+      });
+
+      const finalize = await replaceMediaFile(
+        mediaId,
+        publicUrl,
+        file.type || 'application/octet-stream',
+        file.size,
+        file.name,
+      );
+      if (!finalize.ok) {
+        // `kind_change_disallowed` and every other rejection envelope:
+        // the existing row is unchanged on the server, so we MUST NOT
+        // mutate `items` here. Surfacing the error inline is enough.
+        patchReplaceState(mediaId, {
+          status: 'error',
+          error: finalize.error,
+        });
+        return;
+      }
+
+      // Replace the row in `items` by id, preserving its position so
+      // alt text, caption, and ordering stay visible without a refresh.
+      setItems((current) =>
+        current.map((row) =>
+          row.id === finalize.value.id
+            ? {
+                id: finalize.value.id,
+                storageKey: finalize.value.storageKey,
+                mimeType: finalize.value.mimeType,
+                kind: finalize.value.kind,
+                altText: finalize.value.altText,
+                caption: finalize.value.caption,
+                ordering: finalize.value.ordering,
+                width: finalize.value.width,
+                height: finalize.value.height,
+                embedUrl: finalize.value.embedUrl,
+              }
+            : row,
+        ),
+      );
+      patchReplaceState(mediaId, { status: 'done', progress: 100 });
+      // Auto-clear the success indicator after a short pause so the row
+      // settles back to its normal layout once the new bytes are in.
+      setTimeout(() => {
+        if (previewUrl !== null) URL.revokeObjectURL(previewUrl);
+        clearReplaceState(mediaId);
+      }, 1500);
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : String(err);
+      patchReplaceState(mediaId, { status: 'error', error: msg });
+    } finally {
+      clearInterval(progressTickId);
+    }
+  }
+
+  function dismissReplaceError(mediaId: string): void {
+    const state = replaceStates.get(mediaId);
+    if (state?.previewUrl !== null && state?.previewUrl !== undefined) {
+      URL.revokeObjectURL(state.previewUrl);
+    }
+    clearReplaceState(mediaId);
   }
 
   // ---- File input click handler ---------------------------------------
@@ -354,22 +667,130 @@ export function ProjectMediaManager({
     useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }),
   );
 
-  async function onDragEndItems(event: DragEndEvent): Promise<void> {
+  function onDragEndItems(event: DragEndEvent): void {
     const { active, over } = event;
     if (over === null || active.id === over.id) return;
     const oldIndex = items.findIndex((i) => i.id === active.id);
     const newIndex = items.findIndex((i) => i.id === over.id);
     if (oldIndex === -1 || newIndex === -1) return;
+
+    // Snapshot the order BEFORE this drop so we can revert on rejection.
+    // Only capture the snapshot on the first drop within a debounce window;
+    // consecutive drops keep collapsing toward the same pre-drop baseline.
+    if (reorderSnapshotRef.current === null) {
+      reorderSnapshotRef.current = items;
+    }
+
     const next = arrayMove([...items], oldIndex, newIndex);
     setItems(next);
     setReorderError(null);
-    const ids = next.map((i) => i.id);
-    const result = await reorderMediaList(projectId, ids);
-    if (!result.ok) {
-      setReorderError(result.error);
-      // Revert on failure.
-      setItems(items);
+
+    scheduleReorderSubmission();
+  }
+
+  function scheduleReorderSubmission(): void {
+    // Clear any pending timer so the 500 ms window restarts. Within the
+    // window the local `items` array is the source of truth; only the most
+    // recent ordering is persisted.
+    if (reorderTimerRef.current !== null) {
+      clearTimeout(reorderTimerRef.current);
     }
+    reorderTimerRef.current = setTimeout(() => {
+      reorderTimerRef.current = null;
+      void submitReorder();
+    }, 500);
+  }
+
+  async function submitReorder(): Promise<void> {
+    // If a previous request is still in flight (e.g., the user dropped
+    // again after 10 s) abort it so we don't race with stale state.
+    if (reorderAbortRef.current !== null) {
+      reorderAbortRef.current.abort();
+      reorderAbortRef.current = null;
+    }
+
+    const snapshot = reorderSnapshotRef.current;
+    if (snapshot === null) return;
+
+    const orderedIds = itemsRef.current.map((i) => i.id);
+
+    const controller = new AbortController();
+    reorderAbortRef.current = controller;
+
+    // 10-second client-side ceiling. The server action call is not
+    // natively cancellable, but we ignore the eventual result if the
+    // signal fires.
+    const timeoutId = setTimeout(() => {
+      controller.abort();
+    }, 10_000);
+
+    let result: Awaited<ReturnType<typeof reorderMediaList>> | null = null;
+    let timedOut = false;
+    let networkError: string | null = null;
+    try {
+      const inFlight = reorderMediaList(projectId, orderedIds);
+      const aborted = new Promise<'aborted'>((resolve) => {
+        controller.signal.addEventListener(
+          'abort',
+          () => {
+            timedOut = true;
+            resolve('aborted');
+          },
+          { once: true },
+        );
+      });
+      const raced = await Promise.race([inFlight, aborted]);
+      if (raced !== 'aborted') {
+        result = raced;
+      }
+    } catch (err) {
+      networkError = err instanceof Error ? err.message : 'Reorder failed.';
+    } finally {
+      clearTimeout(timeoutId);
+      // Only clear the abort ref if it still points at this controller; a
+      // newer drop may have replaced it with a fresh one.
+      if (reorderAbortRef.current === controller) {
+        reorderAbortRef.current = null;
+      }
+    }
+
+    if (timedOut) {
+      // Revert to the pre-drop snapshot and surface a timeout error.
+      setItems(snapshot);
+      setReorderError(
+        'Reorder timed out after 10 seconds. The previous order has been restored.',
+      );
+      reorderSnapshotRef.current = null;
+      return;
+    }
+
+    if (networkError !== null) {
+      // Network / runtime failure. Revert and surface the error.
+      setItems(snapshot);
+      setReorderError(networkError);
+      reorderSnapshotRef.current = null;
+      return;
+    }
+
+    if (result === null) {
+      // Should not happen given the race above, but guard defensively.
+      reorderSnapshotRef.current = null;
+      return;
+    }
+
+    if (!result.ok) {
+      // unknown_media_id, reorder_count_mismatch, or reorder_duplicate_id —
+      // revert the optimistic order to the pre-drop snapshot and surface
+      // the error against the row anchor.
+      setItems(snapshot);
+      setReorderError(result.error);
+      reorderSnapshotRef.current = null;
+      return;
+    }
+
+    // Success: the optimistic order is already correct; clear the snapshot
+    // so the next drop captures a fresh baseline.
+    reorderSnapshotRef.current = null;
   }
 
   // ---- Per-item handlers ----------------------------------------------
@@ -541,6 +962,9 @@ export function ProjectMediaManager({
                   onSetCover={handleSetCover}
                   onSaveMetadata={handleSaveMetadata}
                   onDelete={handleDelete}
+                  replaceState={replaceStates.get(item.id) ?? null}
+                  onReplaceFile={runReplace}
+                  onDismissReplaceError={dismissReplaceError}
                 />
               ))}
             </ul>
@@ -810,75 +1234,86 @@ function UploadQueue({
         ) : null}
       </div>
       <ul role="list" className="mt-3 space-y-2">
-        {queue.map((q) => (
-          <li
-            key={q.id}
-            className="flex items-center gap-3 rounded-2xl border-2 border-foreground bg-background p-3"
-          >
-            <div className="h-12 w-16 shrink-0 overflow-hidden rounded-lg border-2 border-foreground bg-surface">
-              {q.previewUrl !== null ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={q.previewUrl}
-                  alt=""
-                  className="h-full w-full object-cover"
-                />
-              ) : (
-                <div className="flex h-full w-full items-center justify-center text-[10px] font-semibold text-muted">
-                  {q.file.type.startsWith('video/') ? '▶ video' : '◇ file'}
+        {queue.map((q) => {
+          const isError = q.status === 'error' || q.status === 'permanently_failed';
+          const isPermanent = q.status === 'permanently_failed';
+          return (
+            <li
+              key={q.id}
+              role={isError ? 'alert' : undefined}
+              className="flex items-center gap-3 rounded-2xl border-2 border-foreground bg-background p-3"
+            >
+              <div className="h-12 w-16 shrink-0 overflow-hidden rounded-lg border-2 border-foreground bg-surface">
+                {q.previewUrl !== null ? (
+                  // eslint-disable-next-line @next/next/no-img-element
+                  <img
+                    src={q.previewUrl}
+                    alt=""
+                    className="h-full w-full object-cover"
+                  />
+                ) : (
+                  <div className="flex h-full w-full items-center justify-center text-[10px] font-semibold text-muted">
+                    {q.file.type.startsWith('video/') ? '▶ video' : '◇ file'}
+                  </div>
+                )}
+              </div>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="truncate text-sm font-medium text-foreground">
+                    {q.file.name}
+                  </p>
+                  <span className="shrink-0 text-[10px] uppercase tracking-[0.16em] text-muted">
+                    {formatBytes(q.file.size)}
+                  </span>
                 </div>
-              )}
-            </div>
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center justify-between gap-3">
-                <p className="truncate text-sm font-medium text-foreground">
-                  {q.file.name}
+                <div className="mt-2 h-2 overflow-hidden rounded-full border-2 border-foreground bg-background">
+                  <div
+                    className={`h-full transition-all ease-soft ${
+                      isError
+                        ? 'bg-[hsl(var(--color-pop-amber))]'
+                        : q.status === 'done'
+                          ? 'bg-[hsl(var(--color-pop-sage))]'
+                          : 'bg-[hsl(var(--color-pop-honey))]'
+                    }`}
+                    style={{ width: `${q.status === 'done' ? 100 : q.progress}%` }}
+                  />
+                </div>
+                <p className="mt-1 text-[10px] uppercase tracking-[0.16em] text-muted">
+                  {statusLabel(q)}
                 </p>
-                <span className="shrink-0 text-[10px] uppercase tracking-[0.16em] text-muted">
-                  {formatBytes(q.file.size)}
-                </span>
+                {isError && q.error !== null ? (
+                  <p className="mt-1 text-xs text-foreground">{q.error}</p>
+                ) : null}
               </div>
-              <div className="mt-2 h-2 overflow-hidden rounded-full border-2 border-foreground bg-background">
-                <div
-                  className={`h-full transition-all ease-soft ${
-                    q.status === 'error'
-                      ? 'bg-[hsl(var(--color-pop-amber))]'
-                      : q.status === 'done'
-                        ? 'bg-[hsl(var(--color-pop-sage))]'
-                        : 'bg-[hsl(var(--color-pop-honey))]'
-                  }`}
-                  style={{ width: `${q.status === 'done' ? 100 : q.progress}%` }}
-                />
+              <div className="flex shrink-0 flex-col gap-1">
+                {/*
+                 * Retry is only offered while the file still has retries
+                 * left in its budget. After MAX_UPLOAD_ATTEMPTS the file
+                 * enters `permanently_failed` and the affordance is
+                 * suppressed (Requirement 13.4 / 13.5).
+                 */}
+                {q.status === 'error' && !isPermanent ? (
+                  <button
+                    type="button"
+                    onClick={() => onRetry(q.id)}
+                    className="rounded-full border-2 border-foreground bg-background px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em]"
+                  >
+                    Retry
+                  </button>
+                ) : null}
+                {q.status !== 'done' ? (
+                  <button
+                    type="button"
+                    onClick={() => onCancel(q.id)}
+                    className="rounded-full border-2 border-foreground bg-background px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em]"
+                  >
+                    {q.status === 'uploading' ? 'Cancel' : 'Remove'}
+                  </button>
+                ) : null}
               </div>
-              <p className="mt-1 text-[10px] uppercase tracking-[0.16em] text-muted">
-                {statusLabel(q)}
-              </p>
-              {q.status === 'error' && q.error !== null ? (
-                <p className="mt-1 text-xs text-foreground">{q.error}</p>
-              ) : null}
-            </div>
-            <div className="flex shrink-0 flex-col gap-1">
-              {q.status === 'error' ? (
-                <button
-                  type="button"
-                  onClick={() => onRetry(q.id)}
-                  className="rounded-full border-2 border-foreground bg-background px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em]"
-                >
-                  Retry
-                </button>
-              ) : null}
-              {q.status !== 'done' ? (
-                <button
-                  type="button"
-                  onClick={() => onCancel(q.id)}
-                  className="rounded-full border-2 border-foreground bg-background px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em]"
-                >
-                  {q.status === 'uploading' ? 'Cancel' : 'Remove'}
-                </button>
-              ) : null}
-            </div>
-          </li>
-        ))}
+            </li>
+          );
+        })}
       </ul>
     </div>
   );
@@ -888,7 +1323,10 @@ function statusLabel(q: QueuedFile): string {
   if (q.status === 'waiting') return 'Waiting';
   if (q.status === 'uploading') return `Uploading · ${q.progress}%`;
   if (q.status === 'done') return 'Done';
-  return 'Failed';
+  if (q.status === 'permanently_failed') {
+    return `Permanently failed · ${q.attemptCount}/${MAX_UPLOAD_ATTEMPTS} attempts`;
+  }
+  return `Failed · attempt ${q.attemptCount}/${MAX_UPLOAD_ATTEMPTS}`;
 }
 
 function formatBytes(bytes: number): string {
@@ -972,6 +1410,9 @@ function SortableMediaRow({
   onSetCover,
   onSaveMetadata,
   onDelete,
+  replaceState,
+  onReplaceFile,
+  onDismissReplaceError,
 }: {
   readonly item: MediaItemView;
   readonly isCover: boolean;
@@ -982,6 +1423,9 @@ function SortableMediaRow({
     caption: string,
   ) => Promise<void>;
   readonly onDelete: (id: string) => void;
+  readonly replaceState: ReplaceState | null;
+  readonly onReplaceFile: (mediaId: string, file: File) => Promise<void>;
+  readonly onDismissReplaceError: (mediaId: string) => void;
 }): ReactElement {
   const {
     attributes,
@@ -995,6 +1439,7 @@ function SortableMediaRow({
   const [altText, setAltText] = useState(item.altText ?? '');
   const [caption, setCaption] = useState(item.caption ?? '');
   const [saving, setSaving] = useState(false);
+  const replaceInputRef = useRef<HTMLInputElement | null>(null);
 
   // Sync local state if the parent updates the row.
   useEffect(() => {
@@ -1017,6 +1462,22 @@ function SortableMediaRow({
     } finally {
       setSaving(false);
     }
+  }
+
+  // Embeds have no stored bytes to replace; the affordance only makes
+  // sense for image / video / model3d rows backed by an R2 object.
+  const canReplace = item.embedUrl === null;
+  const replaceBusy =
+    replaceState !== null &&
+    (replaceState.status === 'uploading' || replaceState.status === 'waiting');
+
+  function onReplaceFilePicked(e: ChangeEvent<HTMLInputElement>): void {
+    const files = e.target.files;
+    if (files === null || files.length === 0) return;
+    const picked = files[0];
+    e.target.value = '';
+    if (picked === undefined) return;
+    void onReplaceFile(item.id, picked);
   }
 
   return (
@@ -1099,6 +1560,12 @@ function SortableMediaRow({
             ) : null}
           </>
         )}
+        {replaceState !== null ? (
+          <ReplaceProgress
+            state={replaceState}
+            onDismiss={() => onDismissReplaceError(item.id)}
+          />
+        ) : null}
       </div>
       <div className="flex flex-wrap items-center justify-end gap-2">
         {item.kind === 'image' ? (
@@ -1114,6 +1581,26 @@ function SortableMediaRow({
           >
             {isCover ? '★ Cover' : 'Set cover'}
           </button>
+        ) : null}
+        {canReplace ? (
+          <>
+            <button
+              type="button"
+              onClick={() => replaceInputRef.current?.click()}
+              disabled={replaceBusy}
+              aria-busy={replaceBusy}
+              className="rounded-full border-2 border-foreground bg-background px-3 py-1 text-[10px] font-bold uppercase tracking-[0.16em] hover:bg-surface disabled:cursor-not-allowed disabled:opacity-60"
+            >
+              {replaceBusy ? 'Replacing…' : 'Replace file'}
+            </button>
+            <input
+              ref={replaceInputRef}
+              type="file"
+              accept={[...ACCEPTED_MIME, ...ACCEPTED_EXTS].join(',')}
+              onChange={onReplaceFilePicked}
+              className="hidden"
+            />
+          </>
         ) : null}
         <button
           type="button"
@@ -1131,6 +1618,63 @@ function SortableMediaRow({
         </button>
       </div>
     </li>
+  );
+}
+
+function ReplaceProgress({
+  state,
+  onDismiss,
+}: {
+  readonly state: ReplaceState;
+  readonly onDismiss: () => void;
+}): ReactElement {
+  const isError = state.status === 'error';
+  const isDone = state.status === 'done';
+  const widthPct = isDone ? 100 : state.progress;
+  return (
+    <div
+      role={isError ? 'alert' : undefined}
+      className={`mt-3 rounded-xl border-2 border-foreground p-2 ${
+        isError
+          ? 'bg-[hsl(var(--color-pop-amber)/0.3)]'
+          : isDone
+            ? 'bg-[hsl(var(--color-pop-sage)/0.25)]'
+            : 'bg-surface'
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <p className="truncate text-[10px] font-bold uppercase tracking-[0.16em] text-foreground">
+          Replacing · {state.file.name}
+        </p>
+        <span className="shrink-0 text-[10px] uppercase tracking-[0.16em] text-muted">
+          {statusLabel(state)}
+        </span>
+      </div>
+      <div className="mt-2 h-2 overflow-hidden rounded-full border-2 border-foreground bg-background">
+        <div
+          className={`h-full transition-all ease-soft ${
+            isError
+              ? 'bg-[hsl(var(--color-pop-amber))]'
+              : isDone
+                ? 'bg-[hsl(var(--color-pop-sage))]'
+                : 'bg-[hsl(var(--color-pop-honey))]'
+          }`}
+          style={{ width: `${widthPct}%` }}
+        />
+      </div>
+      {isError && state.error !== null ? (
+        <div className="mt-2 flex items-start justify-between gap-2">
+          <p className="text-xs text-foreground">{state.error}</p>
+          <button
+            type="button"
+            onClick={onDismiss}
+            className="shrink-0 rounded-full border-2 border-foreground bg-background px-3 py-0.5 text-[10px] font-bold uppercase tracking-[0.16em]"
+          >
+            Dismiss
+          </button>
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -1194,8 +1738,10 @@ async function setCoverMediaSilent(
   projectId: string,
   mediaId: string,
 ): Promise<void> {
-  const fd = new FormData();
-  fd.set('projectId', projectId);
-  fd.set('mediaId', mediaId);
-  await setCoverMedia(fd);
+  // Fire-and-forget from the user's perspective: any rejection envelope
+  // is surfaced through the action's typed return shape but the
+  // optimistic cover badge is already painted. Errors are intentionally
+  // swallowed here because the row state stays consistent (the action
+  // never writes on a rejection path).
+  await setCoverMedia(projectId, mediaId);
 }

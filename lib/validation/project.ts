@@ -42,7 +42,11 @@ export const SOFTWARE_ENTRY_MAX_LENGTH = 60;
 export const SLUG_MAX_LENGTH = 80;
 export const SLUG_PATTERN = /^[a-z0-9]+(-[a-z0-9]+)*$/;
 
-const VALID_STATUSES: ReadonlySet<ProjectStatus> = new Set(['draft', 'published']);
+const VALID_STATUSES: ReadonlySet<ProjectStatus> = new Set([
+  'draft',
+  'scheduled',
+  'published',
+]);
 
 // ---------------------------------------------------------------------------
 // Result shapes
@@ -319,7 +323,7 @@ export function validateProjectInput(
     errors.push({
       field: 'status',
       code: 'enum_invalid',
-      message: 'status must be one of: draft, published',
+      message: 'status must be one of: draft, scheduled, published',
     });
   }
 

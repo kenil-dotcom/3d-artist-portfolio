@@ -144,14 +144,14 @@ Implementation language is TypeScript, matching the rest of the Next.js 14 + Pri
     - _Requirements: 4.4, 6.8_
 
 - [ ] 4. In-place media replacement
-  - [~] 4.1 Implement `replaceMediaFile` server action
+  - [x] 4.1 Implement `replaceMediaFile` server action
     - Add `replaceMediaFile(mediaId, publicUrl, contentType, contentLength, filename)` to `app/admin/(protected)/projects/[id]/edit/upload-actions.ts`.
     - Steps: (1) `requireAdmin()`. (2) Load the existing row. (3) Compare `inferKindFromMime(contentType)` to the existing `MediaItem.kind` — when they differ, return `{ ok: false, code: 'kind_change_disallowed' }` immediately and **do not** mutate the row, **do not** invalidate the Variant_Set, **do not** delete any object from R2, **do not** call sharp (Requirement 4.3). The just-uploaded orphan object at `publicUrl` is left to the bucket lifecycle rule. (4) Inside a single Prisma transaction, update `storageKey`, `contentHash`, `mimeType`, `byteSize`, `width`, `height`, `extension` while preserving `id`, `projectId`, `altText`, `caption`, `ordering`. (5) **Always** invalidate the prior Variant_Set by writing `variantSet = { renditions: [], failures: [] }` and calling `deleteVariantKeys(mediaId)` regardless of new kind, so leftover renditions never serve stale bytes (Requirement 4.4). (6) Regenerate variants via `generateVariants` **only** when the new `kind === 'image'` — video and model3d replacements skip the sharp pipeline entirely (Requirement 4.4 / 4.5). (7) Call `revalidateProjectPaths(slug)` so the next public request to `/projects/{slug}` returns the new file (Requirement 4.5).
     - **Upload-failure rollback semantics.** If the browser's PUT to the new presigned URL fails or times out (the same 600-second / non-2xx envelope used for fresh uploads), the client never invokes `replaceMediaFile` and the existing row remains exactly as it was. If `replaceMediaFile` itself throws after step 4 has committed, the action returns `{ ok: false, code: 'upload_failed' }`; the variant-set invalidation in step 5 has already cleared `variantSet` so the renderer falls back to the original `storageKey` rendering per Requirement 6.6 — the user-visible failure mode is "no responsive variants yet" rather than a broken row.
     - Return the same `FinalizeUploadResult` envelope used by `finalizeUpload`.
     - _Requirements: 4.1, 4.2, 4.3, 4.4, 4.5, 4.6_
 
-  - [~] 4.2 Wire "Replace file" affordance into `ProjectMediaManager`
+  - [x] 4.2 Wire "Replace file" affordance into `ProjectMediaManager`
     - In `components/admin/ProjectMediaManager.tsx`, add a "Replace file" control to each `SortableMediaRow` that opens a hidden `<input type="file">` scoped to that row. On selection, run the existing presign → PUT → finalize flow but call `replaceMediaFile(mediaId, ...)` instead of `finalizeUpload`. Show per-row progress using the existing `QueuedFile` machinery, keyed by `mediaId` so it does not collide with the global queue.
     - On success, replace the row in `items` with the returned record (preserving its position) so alt text and caption stay visible without a refresh.
     - On `kind_change_disallowed`, render the error inline against the row and confirm in-DOM that the row's pre-replace data is still rendered unchanged (no optimistic mutation on the rejection branch).
@@ -188,7 +188,7 @@ Implementation language is TypeScript, matching the rest of the Next.js 14 + Pri
     - **Validates: Requirements 9.1, 9.2, 9.3, 9.4**
     - File: `tests/pbt/embed-url.pbt.test.ts`.
 
-  - [~] 5.5 Client-side reorder hardening (debounce + abort timeout)
+  - [x] 5.5 Client-side reorder hardening (debounce + abort timeout)
     - In `components/admin/ProjectMediaManager.tsx`, debounce the reorder submission to **500 ms** after the last drop using a single trailing `setTimeout`. Within the debounce window the local `items` array is the source of truth so consecutive drops collapse into a single network round trip (Requirement 3.1).
     - Wrap the submission `fetch` / server-action call in an `AbortController` configured with a **10-second** timeout. On timeout, abort the in-flight request, revert the local `items` state to the pre-drop snapshot, and surface the error against the row anchor.
     - On any rejection (`unknown_media_id`, `reorder_count_mismatch`, `reorder_duplicate_id`, or the abort timeout), revert the optimistic order to the pre-drop snapshot. On success the optimistic order is already correct; no flicker.
@@ -204,13 +204,13 @@ Implementation language is TypeScript, matching the rest of the Next.js 14 + Pri
     - Return the `Result<T, { code }>` envelope shape from design.md "Action result envelopes".
     - _Requirements: 1.3, 1.4, 1.5, 1.6, 1.7, 1.8, 1.9, 1.10, 1.11, 1.12, 1.14, 1.15, 1.16, 1.17, 1.18, 1.19, 12.1_
 
-  - [~] 6.2 Wire revalidation into section-block actions with non-blocking warnings
+  - [x] 6.2 Wire revalidation into section-block actions with non-blocking warnings
     - On every successful section-block mutation, call `revalidatePath('/admin/projects')`, `revalidatePath('/gallery')`, `revalidatePath('/')`, and `revalidatePath('/projects/' + slug)` (load the slug in the same transaction). Reuse the existing `revalidateProjectPaths` helper by exporting it from `app/admin/(protected)/projects/[id]/edit/actions.ts`.
     - Wrap every individual `revalidatePath` call in a try/catch. Accumulate any failures into a `revalidationWarnings: ReadonlyArray<string>` field on the action's `Result.value` envelope (each entry shaped as `${path}: ${reason}`). The persisted mutation is **not** rolled back when a revalidation fails — the database state is the canonical source of truth, and a failed revalidation only delays the public surface from picking up the change until the next ISR window (Requirement 14.5).
     - Surface `revalidationWarnings` in the admin client as a non-blocking warning banner rendered at the top of the editor so admins see which path failed without losing the success indication.
     - _Requirements: 14.1, 14.2, 14.3, 14.5_
 
-  - [~] 6.3 Build `components/admin/ProjectSectionEditor.tsx`
+  - [x] 6.3 Build `components/admin/ProjectSectionEditor.tsx`
     - Client component rendered inside `app/admin/(protected)/projects/[id]/edit/page.tsx` directly under the `ProjectMediaManager` section.
     - Props: `projectId`, `slug`, `description`, `mediaItems` (already loaded by the page), `initialBlocks: ReadonlyArray<SectionBlock>`.
     - Renders an ordered list of blocks with `@dnd-kit/sortable` powered drag handles (mirroring `ProjectMediaManager`'s setup). Per-block inline editor switches on `kind`: textarea for `text`; media-picker `<select>` filtered to image/video/model3d Media_Items belonging to the project for the other kinds; two pickers for `image_pair`.
@@ -219,7 +219,7 @@ Implementation language is TypeScript, matching the rest of the Next.js 14 + Pri
     - When `initialBlocks.length === 0` and `description.trim().length > 0`, render a virtual seed `text` block sourced from `description`. Persist the seed only when the admin saves any block in the editor for the first time (Requirement 1.13 / 15.5).
     - _Requirements: 1.1, 1.2, 1.3, 1.4, 1.13, 1.16, 1.17, 1.19, 3.1, 3.6, 3.7, 15.5_
 
-  - [~] 6.4 Mount the section editor on the edit page
+  - [x] 6.4 Mount the section editor on the edit page
     - In `app/admin/(protected)/projects/[id]/edit/page.tsx`, fetch `prisma.sectionBlock.findMany({ where: { projectId }, orderBy: { ordering: 'asc' } })` alongside the existing `mediaItems` fetch and pass the result into `ProjectSectionEditor`.
     - Section appears as a new `<section aria-labelledby="sections-heading">` between the existing media block and the danger-zone block.
     - _Requirements: 1.1, 1.13_
@@ -229,18 +229,18 @@ Implementation language is TypeScript, matching the rest of the Next.js 14 + Pri
     - _Requirements: 1.13, 15.5_
 
 - [ ] 7. Schedule UI and cron
-  - [~] 7.1 Widen the status field in `ProjectEditorForm`
+  - [x] 7.1 Widen the status field in `ProjectEditorForm`
     - In `components/admin/ProjectEditorForm.tsx`, replace the two-state Draft/Published chip group inside `StatusField` with a tri-state Draft / Scheduled / Published group. When `Scheduled` is active, render an `<input type="datetime-local" name="scheduledAt">` with a `min` set to `now + 1 minute` and a `max` set to `now + 365 days` so the browser-side validator catches the bound before the server.
     - The hidden `status` field continues to drive submission; add a hidden `scheduledAt` field that mirrors the datetime input. When the admin switches away from `Scheduled`, clear the field locally so it round-trips correctly.
     - _Requirements: 7.1, 7.2_
 
-  - [~] 7.2 Extend `saveProject` to honour scheduled status
+  - [x] 7.2 Extend `saveProject` to honour scheduled status
     - In `app/admin/(protected)/projects/[id]/edit/actions.ts`, parse `scheduledAt` from the form, call `parseScheduledAt(scheduledAt, new Date())` from `lib/validation/schedule.ts`, and surface `scheduled_at_in_past` (covering both the past timestamp and the >365-day-future timestamp) and `scheduled_at_missing` per Requirements 7.3 / 7.4. On rejection, leave the previously stored Project values unchanged — no column is written on the rejection branch.
     - Use `applyStatusTransition` to compute the canonical `(status, scheduledAt, publishedAt)` triple. Persist the triple per Requirement 7.5 / 7.6. Run the publish-readiness validator on transitions to either `scheduled` or `published`; on `{ ok: false }` from the validator, leave persisted state unchanged and surface the `RULE_ORDER`-ordered union of failing codes (Requirement 8.1).
     - Update the create branch in `app/admin/(protected)/projects/new/actions.ts` to forbid `scheduled` (creation always starts as `draft`, matching today's behaviour).
     - _Requirements: 7.2, 7.3, 7.4, 7.5, 7.6, 8.1_
 
-  - [~] 7.3 Build the cron route at `app/api/cron/publish-scheduled/route.ts`
+  - [x] 7.3 Build the cron route at `app/api/cron/publish-scheduled/route.ts`
     - Export a `GET` handler that asserts `Authorization: Bearer ${process.env.CRON_SECRET}` (the header Vercel injects into cron invocations). On a missing header, malformed header, or token mismatch, respond with HTTP 401 and never read or mutate any `projects` row (Requirement 7.11). Compare the supplied bearer to the configured secret using `crypto.timingSafeEqual` over equal-length `Buffer`s — pad / reject mismatched lengths before the comparison so the timing-safe compare never throws.
     - Run a **single transactional update** that promotes every due Project in one round trip: `UPDATE projects SET status = 'published', published_at = COALESCE(published_at, NOW()), scheduled_at = NULL WHERE status = 'scheduled' AND scheduled_at <= NOW() RETURNING id, slug;` Use `prisma.$queryRaw` so the `RETURNING` clause executes in one round trip and the multi-row promotion happens atomically.
     - Iterate the returned `(id, slug)` pairs and call `revalidatePath('/projects/' + slug)` for each, then call `revalidatePath('/gallery')` and `revalidatePath('/')` once at the end of the loop. Each `revalidatePath` is wrapped in try/catch — a failure for one slug is logged with the path and reason and the loop continues to the next slug, so a single bad slug does not block the rest (Requirement 7.8). The handler awaits every revalidation before returning so any request received after the response returns the newly published Project (Requirement 7.12).
@@ -260,12 +260,12 @@ Implementation language is TypeScript, matching the rest of the Next.js 14 + Pri
     - _Requirements: 7.9, 7.10_
 
 - [~] 8. Public renderer updates for variants and 3D models
-  - [~] 8.1 Update `ResponsiveImage` to consume `VariantSet`
+  - [x] 8.1 Update `ResponsiveImage` to consume `VariantSet`
     - In `components/media/ResponsiveImage.tsx`, accept an optional `variantSet?: VariantSet` prop. When `variantSet.renditions.length > 0`, emit a `<picture>` element with `<source type="image/avif" srcset=...>`, `<source type="image/webp" srcset=...>`, and the original `<img src={storageKey}>` as the final fallback. When the prop is absent or `renditions` is empty (legacy rows or in-flight generation), fall back to the existing single-source `<img>` rendering of `storageKey` (Requirement 6.6).
     - Build the `srcset` strings as `<storageKey> <width>w` joined by commas, sorted ascending by width.
     - _Requirements: 6.5, 6.6_
 
-  - [~] 8.2 Render section blocks on the public detail page
+  - [x] 8.2 Render section blocks on the public detail page
     - In `app/projects/[slug]/page.tsx`, fetch the project's `sectionBlocks` ordered by `(ordering ASC, createdAt ASC)` so deterministic rendering survives the rare tie when two blocks share the same `ordering` mid-reorder (Requirement 16.1). When `sectionBlocks.length > 0`, render a new `SectionBlockRenderer` switch beneath the hero. When the array is empty fall back to rendering `Project.description` per Requirement 16.2.
     - `SectionBlockRenderer` switches on `block.kind`:
       - `text`: render sanitised HTML inside a prose container; if the trimmed body is empty, skip the block without raising an error (Requirement 16.4); cap rendered length at 20 000 characters.
@@ -293,7 +293,7 @@ Implementation language is TypeScript, matching the rest of the Next.js 14 + Pri
   - Run `npm run typecheck`, `npm run lint`, `npm run test`. Ensure every property and unit test introduced in tasks 1–8 passes. Ask the user if questions arise.
 
 - [ ] 10. UX polish and per-row error surfacing
-  - [~] 10.1 Per-file retry / cancel / progress surface
+  - [x] 10.1 Per-file retry / cancel / progress surface
     - Confirm `ProjectMediaManager`'s existing `QueuedFile` state covers Requirements 13.2–13.7 and harden where needed:
       - **Per-file retry budget**: each queued file allows up to 3 attempts (initial plus 2 retries). After the third failure the file is marked `permanently_failed`, the "Retry" affordance is hidden, the final failure reason is retained next to the row, and no Media_Item row is ever created for it (Requirement 13.4 / 13.5).
       - **Cancel-abort assertion**: "Cancel" calls `xhr.abort()` on the in-flight `XMLHttpRequest` and the component asserts (via a `Date.now()` check around the `abort()` call) that the abort completes within **1 second**; the file is removed from the queue and `finalizeUpload` is never invoked for it (Requirement 13.6).
@@ -301,7 +301,7 @@ Implementation language is TypeScript, matching the rest of the Next.js 14 + Pri
     - Surface errors inline against the row anchor; section-level banner only for errors that cannot be attributed to a specific row (Requirement 13.1 / 13.2). Include the per-row replace error rendering introduced in task 4.2 on the same surface.
     - _Requirements: 13.1, 13.2, 13.3, 13.4, 13.5, 13.6, 13.7_
 
-  - [~] 10.2 Auto-clear cover when the cover Media_Item is deleted
+  - [x] 10.2 Auto-clear cover when the cover Media_Item is deleted
     - Confirm `setCoverMedia` and `deleteMediaItem` cooperate so deleting a Media_Item that is currently `coverMediaId` flips `Project.coverMediaId` to `null`. Schema-level `onDelete: SetNull` already covers this; add an integration test that exercises the round trip and asserts the gallery thumbnail disappears after the same-request `revalidatePath` (Requirement 5.5).
     - _Requirements: 5.5_
 
@@ -309,14 +309,14 @@ Implementation language is TypeScript, matching the rest of the Next.js 14 + Pri
     - In `tests/unit/cover-media-cleanup.test.ts`, set `coverMediaId` to a known media id, delete it, then assert `Project.coverMediaId` is `null` after revalidation.
     - _Requirements: 5.5_
 
-  - [~] 10.4 Auto-set cover on first image upload and harden setCoverMedia rejections
+  - [x] 10.4 Auto-set cover on first image upload and harden setCoverMedia rejections
     - Verify `ProjectMediaManager.runQueue` already calls `setCoverMediaSilent` when the project has no cover and the new item is image-kind (Requirement 5.4). Move the corresponding server-side check into `setCoverMedia` so the action remains the source of truth and refuses non-image items with `cover_must_be_image` and foreign items with `cover_not_in_project` and missing items with the explicit `cover_media_not_found` code.
     - On every rejection branch (`cover_must_be_image`, `cover_not_in_project`, `cover_media_not_found`), `Project.coverMediaId` is left exactly as it was — no column write occurs on the rejection path. Add an assertion in the action and a test that exercises each branch and confirms the persisted `coverMediaId` is byte-identical pre- and post-call.
     - On the auto-set path during `finalizeUpload`, the action calls `setCoverMediaSilent` (a server-internal variant of `setCoverMedia` that bypasses the user-facing rejection codes) inside the same transaction as the row insert when the parent Project has `coverMediaId IS NULL` and the new item is image-kind. The trigger is positional — the first image-kind Media_Item to land on the Project, regardless of earlier non-image uploads (Requirement 5.4).
     - _Requirements: 5.1, 5.2, 5.3, 5.4, 5.5_
 
 - [ ] 11. Slug-rename revalidation
-  - [~] 11.1 Revalidate both old and new slug paths on rename
+  - [x] 11.1 Revalidate both old and new slug paths on rename
     - In `saveProject`, after the update, call `revalidateProjectPaths(oldSlug)` and `revalidateProjectPaths(newSlug)` whenever `oldSlug !== newSlug`. The current code already calls both helpers; harden by extracting the comparison and adding a dedicated test.
     - _Requirements: 14.4_
 

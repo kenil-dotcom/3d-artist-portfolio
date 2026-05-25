@@ -49,6 +49,21 @@ export async function createProject(
   const categoryId = (formData.get('categoryId') ?? '').toString();
   const creationDate = (formData.get('creationDate') ?? '').toString();
 
+  // Creation always starts as `draft` (Requirement 7.5–7.6 are about
+  // transitions; a brand-new project has nothing to schedule against).
+  // Defensively reject any non-`draft` status the form may submit so
+  // a hand-crafted payload cannot bypass the publish-readiness gate
+  // that the editor's update path enforces for `scheduled` and
+  // `published` transitions.
+  const statusRaw = (formData.get('status') ?? 'draft').toString();
+  if (statusRaw !== 'draft' && statusRaw !== '') {
+    return {
+      status: 'error',
+      message: 'New projects must start as draft.',
+      errors: { status: 'New projects must start as draft.' },
+    };
+  }
+
   const errors: Record<string, string> = {};
   if (titleRaw.length === 0) {
     errors['title'] = 'Title is required.';

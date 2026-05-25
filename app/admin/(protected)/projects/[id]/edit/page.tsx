@@ -20,10 +20,16 @@ import type { ReactElement } from 'react';
 
 import { ProjectEditorForm } from '@/components/admin/ProjectEditorForm';
 import { ProjectMediaManager } from '@/components/admin/ProjectMediaManager';
+import {
+  ProjectSectionEditor,
+  type SectionBlockView,
+  type SectionPickerMediaItem,
+} from '@/components/admin/ProjectSectionEditor';
 import { DeleteProjectForm } from '@/components/admin/DeleteProjectForm';
 import { requireAdmin } from '@/lib/auth/middleware';
 import { listCategories, listTags } from '@/lib/content/api';
 import { prisma } from '@/lib/db/prisma';
+import type { SectionBlockKind } from '@/lib/types/domain';
 
 export const dynamic = 'force-dynamic';
 
@@ -35,6 +41,20 @@ interface ProjectEditPageProps {
 export const metadata = {
   title: 'Admin · Edit project',
 };
+
+/**
+ * Render a `Date` as the `YYYY-MM-DDTHH:mm` string the `datetime-local`
+ * input expects, using local time so the picker bounds (`min`/`max`) and
+ * the prefilled value sit on the same axis. The server-side
+ * `parseScheduledAt` does the authoritative UTC comparison on save.
+ */
+function toDateTimeLocalString(d: Date): string {
+  const pad = (n: number): string => n.toString().padStart(2, '0');
+  return (
+    `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}` +
+    `T${pad(d.getHours())}:${pad(d.getMinutes())}`
+  );
+}
 
 export default async function ProjectEditPage({
   params,
@@ -53,7 +73,14 @@ export default async function ProjectEditPage({
     notFound();
   }
 
-  const [categories, tags] = await Promise.all([listCategories(), listTags()]);
+  const [categories, tags, sectionBlocks] = await Promise.all([
+    listCategories(),
+    listTags(),
+    prisma.sectionBlock.findMany({
+      where: { projectId: project.id },
+      orderBy: [{ ordering: 'asc' }, { createdAt: 'asc' }],
+    }),
+  ]);
 
   const justSaved =
     typeof searchParams['saved'] === 'string' &&
@@ -69,6 +96,10 @@ export default async function ProjectEditPage({
     softwareUsed: [...project.softwareUsed],
     creationDate: project.creationDate.toISOString().slice(0, 10),
     status: project.status,
+    scheduledAt:
+      project.scheduledAt === null
+        ? null
+        : toDateTimeLocalString(project.scheduledAt),
     coverMediaId: project.coverMediaId,
     featuredOrder:
       project.featuredOrder === null ? '' : String(project.featuredOrder),
@@ -86,6 +117,29 @@ export default async function ProjectEditPage({
     height: m.height,
     embedUrl: m.embedUrl,
   }));
+
+  // Picker source for the Section_Editor — only attached image / video /
+  // model3d Media_Items can back a Section_Block (Requirement 1.5–1.8).
+  const sectionPickerMedia: ReadonlyArray<SectionPickerMediaItem> =
+    project.mediaItems.map((m) => ({
+      id: m.id,
+      kind: m.kind as 'image' | 'video' | 'model3d',
+      altText: m.altText,
+      mimeType: m.mimeType,
+      embedUrl: m.embedUrl,
+    }));
+
+  const sectionBlockViews: ReadonlyArray<SectionBlockView> = sectionBlocks.map(
+    (b) => ({
+      id: b.id,
+      projectId: b.projectId,
+      kind: b.kind as SectionBlockKind,
+      ordering: b.ordering,
+      body: b.body,
+      mediaItemId: b.mediaItemId,
+      mediaItemBId: b.mediaItemBId,
+    }),
+  );
 
   return (
     <div className="space-y-10">
@@ -144,6 +198,32 @@ export default async function ProjectEditPage({
             hasCategory={project.categoryId.length > 0}
             initialMedia={mediaItems}
             initialCoverMediaId={project.coverMediaId}
+          />
+        </div>
+      </section>
+
+      <section
+        aria-labelledby="sections-heading"
+        className="surface-card p-6 shadow-[6px_6px_0_0_hsl(var(--color-pop-honey))]"
+      >
+        <h2
+          id="sections-heading"
+          className="font-[family-name:var(--font-display)] text-2xl font-semibold tracking-[-0.02em]"
+        >
+          Sections
+        </h2>
+        <p className="mt-1 text-sm text-muted">
+          Compose the project body from typed blocks: text passages,
+          single images, image pairs, videos, and 3D models. Drag rows
+          to reorder.
+        </p>
+        <div className="mt-6">
+          <ProjectSectionEditor
+            projectId={project.id}
+            slug={project.slug}
+            description={project.description}
+            mediaItems={sectionPickerMedia}
+            initialBlocks={sectionBlockViews}
           />
         </div>
       </section>

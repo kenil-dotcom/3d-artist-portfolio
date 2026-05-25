@@ -15,7 +15,7 @@ import type { ReactElement } from 'react';
 import { ResponsiveImage } from '@/components/media/ResponsiveImage';
 import { Reveal } from '@/components/motion/Reveal';
 import { getBio, listFeaturedProjects } from '@/lib/content/api';
-import type { Project } from '@/lib/types/domain';
+import type { Project, VariantSet } from '@/lib/types/domain';
 
 export const dynamic = 'force-dynamic';
 
@@ -166,6 +166,7 @@ function FeaturedTile({ project, priority }: FeaturedTileProps): ReactElement {
             width={cover.width}
             height={cover.height}
             priority={priority}
+            variantSet={cover.variantSet}
           />
         )}
       </div>
@@ -194,6 +195,7 @@ interface CoverImage {
   readonly alt: string;
   readonly width: number;
   readonly height: number;
+  readonly variantSet: VariantSet;
 }
 
 function findCover(project: Project): CoverImage | null {
@@ -215,6 +217,7 @@ function findCover(project: Project): CoverImage | null {
     alt: item.altText ?? `${project.title} cover image`,
     width: item.ref.width ?? 1600,
     height: item.ref.height ?? 1200,
+    variantSet: item.variantSet,
   };
 }
 

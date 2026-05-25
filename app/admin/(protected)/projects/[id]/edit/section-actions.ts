@@ -11,10 +11,18 @@
  * transaction so partial failures cannot leave the ordering field in a
  * non-contiguous state.
  *
- * Task 6.2 will fold the simple `revalidatePath` calls below into a
- * warnings-aware variant that surfaces revalidation failures to the
- * editor banner; for now a failed revalidation throws and the action
- * surfaces the error, which is acceptable for the MVP.
+ * Task 6.2 — revalidation. Every successful mutation reuses the shared
+ * `revalidateProjectPaths` helper exported from
+ * `app/admin/(protected)/projects/[id]/edit/actions.ts`. That helper
+ * wraps each `revalidatePath` call in try/catch and returns the list of
+ * `${path}: ${reason}` failures. We surface that list verbatim on the
+ * action's `Result.value` envelope as `revalidationWarnings`, so the
+ * editor can render a non-blocking banner above the section list
+ * without losing the success indication. The persisted database
+ * mutation is *not* rolled back when a revalidation fails — the
+ * database is the canonical source of truth and a failed
+ * `revalidatePath` only delays the public surface from picking up the
+ * change until the next ISR window (Requirement 14.5).
  *
  * Spec references:
  *   - Requirement 1.3   — added blocks land at `ordering = N`.
@@ -43,10 +51,9 @@
  *   - Requirement 12.1  — every action invokes `requireAdmin()` first.
  */
 
-import { revalidatePath } from 'next/cache';
-
 import { requireAdmin } from '@/lib/auth/middleware';
 import { prisma } from '@/lib/db/prisma';
+import { revalidateProjectPaths } from './actions';
 import {
   appendBlock,
   enforceBlockLimit,
@@ -84,6 +91,36 @@ import type {
 export type Result<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly code: string; readonly error: string };
+
+/**
+ * Mixin appended to every section-block action's success-arm `value`.
+ * Each entry is shaped as `${path}: ${reason}` and originates from the
+ * shared `revalidateProjectPaths` helper. When every revalidation
+ * succeeds the array is empty, which the consumer uses to suppress the
+ * banner entirely.
+ *
+ * **Consumer.** The non-blocking warning banner is rendered at the top
+ * of the section editor by `components/admin/ProjectSectionEditor.tsx`
+ * (task 6.3). The banner sits above the section list so the admin sees
+ * which path failed without losing the success indication
+ * (Requirement 14.5). The four success envelopes that carry this mixin
+ * are the returns of `addSectionBlock`, `updateSectionBlock`,
+ * `removeSectionBlock`, and `reorderSectionBlocks` — every section-
+ * block mutation in this module.
+ *
+ * Media-side mutations in `./actions.ts` and `./upload-actions.ts` do
+ * not currently surface this field; their result shapes are either
+ * `void` or single-purpose envelopes consumed by `ProjectMediaManager`,
+ * and retrofitting the mixin would reshape eight actions plus the
+ * client prop surface. The shared `revalidateProjectPaths` helper
+ * still wraps each `revalidatePath` call in try/catch on the media
+ * side too, so a failure to flush one path never aborts the rest of
+ * the sweep and never rolls back the persisted mutation; the warning
+ * is simply not surfaced to the admin on those paths.
+ */
+export interface RevalidationWarnings {
+  readonly revalidationWarnings: ReadonlyArray<string>;
+}
 
 /**
  * Stable rejection codes raised by the section-block server actions.
@@ -150,20 +187,17 @@ function brand<B>(value: string): B {
 }
 
 /**
- * Revalidate the admin and public surfaces affected by a section-block
- * mutation. Task 6.2 will replace these with the warnings-aware variant
- * that accumulates per-path failures into `revalidationWarnings` on the
- * action result. For now we use the same simple sequence the existing
- * project actions use (admin list, home, gallery, project detail).
+ * Revalidation paths invoked after every successful section-block
+ * mutation. The actual sequencing — `/admin/projects` → `/admin` → `/`
+ * → `/gallery` → `/projects/{slug}` — and the per-path try/catch +
+ * warning accumulation live inside the shared `revalidateProjectPaths`
+ * helper exported from `./actions.ts`. We import that helper directly
+ * so the section-block actions stay aligned with the project actions:
+ * a failed `revalidatePath` for a single path is logged into the
+ * returned warnings array and the action continues with the remaining
+ * paths. The persisted mutation itself is **not** rolled back on a
+ * revalidation failure (Requirement 14.5).
  */
-function revalidateForProject(slug: string | null): void {
-  revalidatePath('/admin/projects');
-  revalidatePath('/');
-  revalidatePath('/gallery');
-  if (slug !== null && slug.length > 0) {
-    revalidatePath(`/projects/${slug}`);
-  }
-}
 
 /**
  * Convert a Prisma `MediaItem` row to the domain `MediaItem` shape the
@@ -325,7 +359,7 @@ export async function addSectionBlock(
   projectId: string,
   kind: SectionBlockKind,
   payload: AddSectionBlockPayload,
-): Promise<Result<PersistedSectionBlock>> {
+): Promise<Result<PersistedSectionBlock & RevalidationWarnings>> {
   await requireAdmin();
 
   const project = await prisma.project.findUnique({
@@ -405,9 +439,12 @@ export async function addSectionBlock(
       });
     });
 
-    revalidateForProject(project.slug);
+    const revalidationWarnings = await revalidateProjectPaths(project.slug);
 
-    return { ok: true, value: rowToPersisted(created) };
+    return {
+      ok: true,
+      value: { ...rowToPersisted(created), revalidationWarnings },
+    };
   } catch (err) {
     if (err instanceof ValidationFailure) {
       return { ok: false, code: err.code, error: err.message };
@@ -429,7 +466,7 @@ export async function addSectionBlock(
 export async function updateSectionBlock(
   blockId: string,
   patch: SectionBlockPatch,
-): Promise<Result<PersistedSectionBlock>> {
+): Promise<Result<PersistedSectionBlock & RevalidationWarnings>> {
   await requireAdmin();
 
   const existing = await prisma.sectionBlock.findUnique({
@@ -496,9 +533,14 @@ export async function updateSectionBlock(
     },
   });
 
-  revalidateForProject(existing.project.slug);
+  const revalidationWarnings = await revalidateProjectPaths(
+    existing.project.slug,
+  );
 
-  return { ok: true, value: rowToPersisted(updated) };
+  return {
+    ok: true,
+    value: { ...rowToPersisted(updated), revalidationWarnings },
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -515,7 +557,7 @@ export async function updateSectionBlock(
  */
 export async function removeSectionBlock(
   blockId: string,
-): Promise<Result<{ readonly removedId: string }>> {
+): Promise<Result<{ readonly removedId: string } & RevalidationWarnings>> {
   await requireAdmin();
 
   const existing = await prisma.sectionBlock.findUnique({
@@ -578,9 +620,11 @@ export async function removeSectionBlock(
     }
   });
 
-  revalidateForProject(existing.project.slug);
+  const revalidationWarnings = await revalidateProjectPaths(
+    existing.project.slug,
+  );
 
-  return { ok: true, value: { removedId: blockId } };
+  return { ok: true, value: { removedId: blockId, revalidationWarnings } };
 }
 
 // ---------------------------------------------------------------------------
@@ -598,7 +642,7 @@ export async function removeSectionBlock(
 export async function reorderSectionBlocks(
   projectId: string,
   orderedIds: ReadonlyArray<string>,
-): Promise<Result<{ readonly reorderedCount: number }>> {
+): Promise<Result<{ readonly reorderedCount: number } & RevalidationWarnings>> {
   await requireAdmin();
 
   const project = await prisma.project.findUnique({
@@ -671,9 +715,12 @@ export async function reorderSectionBlocks(
     }
   });
 
-  revalidateForProject(project.slug);
+  const revalidationWarnings = await revalidateProjectPaths(project.slug);
 
-  return { ok: true, value: { reorderedCount: orderedIds.length } };
+  return {
+    ok: true,
+    value: { reorderedCount: orderedIds.length, revalidationWarnings },
+  };
 }
 
 // ---------------------------------------------------------------------------
